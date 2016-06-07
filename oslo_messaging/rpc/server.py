@@ -1,4 +1,3 @@
-
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -96,6 +95,10 @@ return values from the methods. By supplying a serializer object, a server can
 deserialize a request context and arguments from - and serialize return values
 to - primitive types.
 """
+import functools
+import inspect
+import time
+import uuid
 
 __all__ = [
     'get_rpc_server',
@@ -112,10 +115,144 @@ from oslo_messaging import server as msg_server
 LOG = logging.getLogger(__name__)
 
 
+class TimeCyclicList(object):
+    """
+     The collection to persisting a time distribution values with
+     specified time interval (time loop) and granularity.
+
+     For example: if duration 60 min, granularity 5 min.
+     then self.distribution is list of 12 buckets:
+     [0-5 min] [5-10 min] [10-15 min] ... [55-60 min]
+     to each of them we are accumulate values by adding.
+
+    """
+
+    def __init__(self, time_loop, granularity):
+        self.time_loop = time_loop
+        self.granularity = granularity
+        self.start_time = time.time()
+        self.latest_action_time = 0
+        self.latest_index = 0
+        self.total = 0
+        self.min, self.max = 0, 0
+        self.distribution = [0] * (time_loop / granularity)
+
+    def get_index(self, time_value):
+        return int((time_value % self.time_loop) / self.granularity)
+
+    def add(self, value):
+        if self.min > value or not self.min:
+            self.min = value
+        if self.max < value:
+            self.max = value
+        self.latest_action_time = time.time()
+        time_index = self.get_index(self.latest_action_time)
+        if time_index < self.latest_index:
+            self.flush()
+        self.distribution[time_index] += value
+        self.latest_index = time_index
+
+    def __repr__(self):
+        current_total = self.total + sum(self.distribution)
+        return {'start_time': self.start_time,
+                'last_action_time': self.latest_action_time,
+                'min': self.min,
+                'max': self.max,
+                'duration': self.time_loop,
+                'granularity': self.granularity,
+                'total': current_total,
+                'current_time': time.time(),
+                'distribution': self.distribution}
+
+    def flush(self):
+        self.total += sum(self.distribution)
+        for i in range(len(self.distribution)):
+            self.distribution[i] = 0
+
+
+class RPCStateEndpoint(object):
+    # namespace is used in order to avoid a methods name conflicts
+    # target = Target(namespace="oslo.messaging.rpc_state")
+
+    def __init__(self, server, target, time_loop=3600, granularity=60):
+        self.rpc_server = server
+        self.target = target
+        self.endpoints_stats = {}
+        self.register_endpoints()
+        self.id = uuid.uuid4()
+        # properties for TimeSeriesCollector
+        self.time_loop = time_loop
+        self.granularity = granularity
+
+        self.info = {'worker_id': self.id,
+                     'topic': self.target.topic,
+                     'exchange': self.target.exchange,
+                     'server': self.target.server}
+
+    def register_endpoints(self):
+
+        def rpc_stats_aware(stats, method):
+            method_name = method.__name__
+            time_series = TimeCyclicList(self.time_loop, self.granularity)
+            calls_series = TimeCyclicList(self.time_loop, self.granularity)
+            stats[method_name] = {'time_series': time_series,
+                                  'calls_series': calls_series}
+
+            @functools.wraps(method)
+            def wrap(*args, **kwargs):
+                start = time.time()
+                res = method(*args, **kwargs)
+                end = time.time()
+                duration = end - start
+                time_series.add(duration)
+                calls_series.add(1)
+                return res
+
+            return wrap
+
+        endpoints = self.rpc_server.dispatcher.endpoints
+        for endpoint in endpoints:
+            e_stat = dict()
+            public_methods = [attr for attr in dir(endpoint) if
+                              inspect.ismethod(getattr(endpoint, attr)) and
+                              not attr.startswith("_")]
+            for name in public_methods:
+                w = rpc_stats_aware(e_stat, getattr(endpoint, name))
+                setattr(endpoint, name, w)
+
+            self.endpoints_stats[type(endpoint).__name__] = e_stat
+
+    def rpc_echo_reply(self, ctx):
+        return self.info
+
+    def _make_sample(self):
+        msg = dict()
+
+        executor_stat = dict()
+        stats = self.rpc_server._work_executor.statistics
+        executor_stat['failures'] = stats.failures
+        executor_stat['executed'] = stats.executed
+        executor_stat['runtime'] = stats.runtime
+        avg = stats.average_runtime if stats.executed else 0
+        executor_stat['average_runtime'] = avg
+
+        msg['executor_stats'] = executor_stat
+        msg['endpoint_stats'] = self.endpoints_stats
+
+        return msg
+
+    def rpc_stats(self, ctx):
+        msg = self._make_sample()
+        msg.update(self.info)
+        return msg
+
+
 class RPCServer(msg_server.MessageHandlingServer):
     def __init__(self, transport, target, dispatcher, executor='blocking'):
         super(RPCServer, self).__init__(transport, dispatcher, executor)
         self._target = target
+        state_endpoint = RPCStateEndpoint(self, target)
+        self.dispatcher.endpoints.append(state_endpoint)
 
     def _create_listener(self):
         return self.transport._listen(self._target, 1, None)
@@ -149,10 +286,10 @@ class RPCServer(msg_server.MessageHandlingServer):
         except Exception:
             LOG.exception(_LE("Can not send reply for message"))
         finally:
-                # NOTE(dhellmann): Remove circular object reference
-                # between the current stack frame and the traceback in
-                # exc_info.
-                del failure
+            # NOTE(dhellmann): Remove circular object reference
+            # between the current stack frame and the traceback in
+            # exc_info.
+            del failure
 
 
 def get_rpc_server(transport, target, endpoints,
@@ -193,6 +330,7 @@ def expected_exceptions(*exceptions):
     ExpectedException, which is used internally by the RPC sever. The RPC
     client will see the original exception type.
     """
+
     def outer(func):
         def inner(*args, **kwargs):
             try:
@@ -205,5 +343,7 @@ def expected_exceptions(*exceptions):
             # ignored and thrown as normal.
             except exceptions:
                 raise rpc_dispatcher.ExpectedException()
+
         return inner
+
     return outer
