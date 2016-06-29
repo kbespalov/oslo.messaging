@@ -12,60 +12,29 @@
         <th>avg</th>
         <th>min</th>
         <th>max</th>
-        <th>total</th>
+        <th>dev</th>
         <th>last call</th>
     </tr>
     </thead>
-    <tbody ng-repeat=" sample in grouped_by_methods[topic]" ng-if="do_filter(sample)">
+    <tbody ng-repeat="sample in state.methods">
 
-    <tr onclick="show_charts(this)">
+    <tr ng-click="show_charts($event,sample,topic)">
         <td>{{sample.host}}</td>
         <td>{{sample.wid}}</td>
         <td>{{sample.endpoint}}</td>
         <td>{{sample.method}}</td>
         <td>{{sample.calls}}</td>
-        <td>{{sample.avg_time}}</td>
-        <td>{{sample.min_time}}</td>
-        <td>{{sample.max_time}}</td>
-        <td>{{sample.total_time}}</td>
-        <td>{{sample.last_action}}</td>
+        <td>{{sample.avg}}</td>
+        <td>{{sample.min}}</td>
+        <td>{{sample.max}}</td>
+        <td>{{sample.dev}}</td>
+        <td>{{sample.last_call}}</td>
     </tr>
-
-    <tr class="collapse out">
+    <tr ng-if="sample.cs != undefined" class="collapse out">
         <td colspan="10">
-            <ul class="nav nav-tabs">
-                <li class="active"><a data-toggle="tab" href="#{{'charts_'+ sample.id}}">Method
-                    Stats</a></li>
-                <li><a data-toggle="tab" href="#{{'executor_'+ sample.id}}">Worker
-                    Executor</a></li>
-                <li><a data-toggle="tab" href="#{{'debug_'+ sample.id}}">Debug
-                    Mode</a></li>
-            </ul>
-            <div class="tab-content">
-                <div ng-attr-id="{{'charts_'+ sample.id}}" class="tab-pane fade in active">
-                    <canvas class="chart chart-bar" chart-data="[sample.ts]" chart-labels="sample.labels" chart-legend="true" chart-series="['time consumption']"></canvas>
-                    <canvas class="chart chart-bar" chart-data="[sample.cs]" chart-labels="sample.labels" chart-legend="true" chart-series="['calls count']"></canvas>
-                </div>
-                <div ng-attr-id="{{'debug_'+ sample.id}}" class="tab-pane fade">
-                    Not implemented yet
-                </div>
-
-                <div ng-attr-id="{{'executor_'+ sample.id}}" class="tab-pane fade">
-                    </br>
-
-                    <ul>
-                        <li><span class="label label-info">Last response time:</span> {{sample.last_update_time}}
-                        </li>
-                        <li><span class="label label-info">Total executed:</span> {{sample.executor.executed}}
-                        </li>
-                        <li><span class="label label-info">Runtime:</span> {{sample.executor.runtime}}
-                        </li>
-                        <li><span class="label label-info">Average Runtime:</span> {{sample.executor.average_runtime}}
-                        </li>
-                    </ul>
-                </div>
-
-            </div>
+            <canvas class="chart chart-bar" chart-data="[sample.cs]" chart-labels="sample.labels" chart-legend="true" chart-series="['calls count']"></canvas>
+            <canvas class="chart chart-bar" chart-data="[sample.ts]" chart-labels="sample.labels" chart-legend="true" chart-series="['time consumption']"></canvas>
+            <canvas class="chart chart-bar" chart-data="[sample.ats]" chart-labels="sample.labels" chart-legend="true" chart-series="['avg time consumption']"></canvas>
         </td>
     </tr>
     </tbody>

@@ -54,6 +54,7 @@ UNIQUE_ID = '_unique_id'
 
 class RpcContext(rpc_common.CommonRpcContext):
     """Context that supports replying to a client.call."""
+
     def __init__(self, **kwargs):
         self.msg_id = kwargs.pop('msg_id', None)
         self.reply_q = kwargs.pop('reply_q', None)

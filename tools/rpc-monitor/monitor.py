@@ -60,7 +60,8 @@ class RPCStateMonitor(object):
         for topic, hosts in self.actual_state.iteritems():
             for host, workers in hosts.iteritems():
                 for worker in workers:
-                    result.append(worker)
+                    result.append((host, worker))
+        return result
 
     def rpc_method_state(self, topic, host, wid, endpoint, name):
         return self.actual_state[topic][host][wid]['endpoints'][endpoint][name]

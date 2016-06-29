@@ -1,12 +1,27 @@
 import datetime
 import json
+from math import sqrt
 
 from flask import Flask, jsonify
-from math import sqrt
-from webob import request
-from flask import render_template
+from flask import request, render_template
 
 from monitor import RPCStateMonitor
+
+
+def calculate_labels(granularity, loop_time, last_action):
+    if not last_action:
+        last_action = datetime.time()
+
+    upper_bound = last_action + (granularity - last_action % granularity)
+    lower_bound = upper_bound - loop_time
+    labels = []
+
+    while lower_bound < upper_bound:
+        labels.append(format_timestamp(lower_bound))
+        lower_bound += granularity
+
+    return labels
+
 
 app = Flask(__name__, static_folder="./static",
             template_folder="./static")
@@ -22,16 +37,21 @@ def index():
     return render_template('index.html')
 
 
-@app.route("/api/method/stat")
-def get_method_stat():
+@app.route("/api/method/state", methods=['POST'])
+def get_method_state():
     data = request.json
-    topic = data['topic']
-    host = data['host']
-    wid = data['wid']
-    endpoint = data['endpoint']
-    method = data['method']
-    stat = monitor.rpc_method_state(topic, host, wid, endpoint, method)
-    return stat
+    topic, host, wid = data['topic'], data['host'], data['wid']
+    endpoint, method = data['endpoint'], data['method']
+
+    w_state = monitor.actual_state[topic][host][wid]
+    m_state = w_state['endpoints'][endpoint][method]
+
+    g, l, a = w_state['granularity'], w_state['loop_time'], m_state['cs']['last_action']
+    labels = calculate_labels(g, l, a)
+    if 'average_ts' not in m_state:
+        calculate_metrics(m_state)
+    m_state['labels'] = labels
+    return jsonify(m_state)
 
 
 @app.route('/api/topics')
@@ -70,15 +90,17 @@ def calculate_metrics(statistics):
             non_empty_buckets += 1
         averaged_ts.append(averaged)
 
-    deviation = sqrt(sample_avg / (non_empty_buckets - 1))
+    deviation = 0
+    if non_empty_buckets > 1:
+        deviation = sqrt(sample_avg / (non_empty_buckets - 1))
 
     statistics['average_ts'] = averaged_ts
     metrics = statistics['metrics'] = {
-        'avg': sample_avg,
-        'min': ts_dist['min'],
-        'max': ts_dist['max'],
-        'dev': deviation,
-        'time': time_total,
+        'avg': round(sample_avg, 3),
+        'min': round(statistics['ts']['min'], 3),
+        'max': round(statistics['ts']['max'], 3),
+        'dev': round(deviation, 3),
+        'time': round(time_total, 3),
         'calls': call_total,
         'last_call': format_timestamp(statistics['ts']['last_action'])
     }
@@ -90,19 +112,19 @@ def global_state():
     return jsonify(monitor.actual_state)
 
 
-@app.route('/api/topics/state')
+@app.route('/api/methods/state', methods=['GET'])
 def group_by_topic():
     response = {}
     for topic, hosts in monitor.actual_state.iteritems():
         topic_state = response[topic] = {}
         workers_state = topic_state['workers'] = []
         methods_state = topic_state['methods'] = []
-        for host, workers in monitor.actual_state.iteritems():
+        for host, workers in hosts.iteritems():
             for worker, state in workers.iteritems():
                 latency = round(state['resp_time'] - state['req_time'], 3)
                 w_state = {'time': 0, 'calls': 0, 'min': 0, 'max': 0}
                 for endpoint, methods in state['endpoints'].iteritems():
-                    for method, statistics in methods:
+                    for method, statistics in methods.iteritems():
                         method_state = {'endpoint': endpoint,
                                         'method': method,
                                         'host': host,
@@ -115,20 +137,21 @@ def group_by_topic():
                             metrics = statistics['metrics']
 
                         method_state.update(metrics)
-                        methods_state.append(methods_state)
+                        methods_state.append(method_state)
 
                         w_state['time'] += metrics['time']
                         w_state['calls'] += metrics['calls']
                         w_state['min'] = min(metrics['min'], w_state['min']) if w_state['min'] else metrics['min']
                         w_state['max'] = max(metrics['max'], w_state['max'])
 
-                resp_time = format_timestamp(worker['resp_time'])
+                resp_time = format_timestamp(state['resp_time'])
                 w_state.update({
                     'latency': latency,
                     'resp_time': resp_time,
                     'runtime': format_timestamp(state['runtime'], absolute=True)
                 })
                 workers_state.append(w_state)
+    return jsonify(response)
 
 
 # return jsonify(monitor.actual_state)

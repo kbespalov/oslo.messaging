@@ -126,6 +126,11 @@ class RPCStateClient(object):
         msg = self._create_call_msg('rpc_stats', args)
         self._publish(msg, exchange, routing_key)
 
+    def call_private_method(self, request_time, exchange=None, routing_key=None):
+        args = {'request_time': request_time}
+        msg = self._create_call_msg('__hash__', args)
+        self._publish(msg, exchange, routing_key)
+
 
 class RPCStateConsumer(object):
     def __init__(self, amqp_url, on_incoming):
