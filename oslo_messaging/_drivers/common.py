@@ -33,17 +33,16 @@ LOG = logging.getLogger(__name__)
 
 _EXCEPTIONS_MODULE = 'exceptions' if six.PY2 else 'builtins'
 
-
 '''RPC Envelope Version.
 
 This version number applies to the top level structure of messages sent out.
 It does *not* apply to the message payload, which must be versioned
-independently.  For example, when using rpc APIs, a version number is applied
-for changes to the API being exposed over rpc.  This version number is handled
-in the rpc proxy and dispatcher modules.
+independently.  For example, when using client APIs, a version number is applied
+for changes to the API being exposed over client.  This version number is handled
+in the client proxy and dispatcher modules.
 
 This version number applies to the message envelope that is used in the
-serialization done inside the rpc layer.  See serialize_msg() and
+serialization done inside the client layer.  See serialize_msg() and
 deserialize_msg().
 
 The current message format (version 2.0) is very simple.  It is:
@@ -109,8 +108,8 @@ class Timeout(RPCException):
         """Initiates Timeout object.
 
         :param info: Extra info to convey to the user
-        :param topic: The topic that the rpc call was sent to
-        :param method: The name of the rpc method being
+        :param topic: The topic that the client call was sent to
+        :param method: The name of the client method being
                                 called
         """
         self.info = info
@@ -146,12 +145,13 @@ class RpcVersionCapError(RPCException):
 
 
 class Connection(object):
-    """A connection, returned by rpc.create_connection().
+    """A connection, returned by client.create_connection().
 
-    This class represents a connection to the message bus used for rpc.
-    An instance of this class should never be created by users of the rpc API.
-    Use rpc.create_connection() instead.
+    This class represents a connection to the message bus used for client.
+    An instance of this class should never be created by users of the client API.
+    Use client.create_connection() instead.
     """
+
     def close(self):
         """Close the connection.
 
@@ -163,7 +163,7 @@ class Connection(object):
 
 
 def serialize_remote_exception(failure_info):
-    """Prepares exception data to be sent over rpc.
+    """Prepares exception data to be sent over client.
 
     Failure_info should be a sys.exc_info() tuple.
 
@@ -273,6 +273,7 @@ class ClientException(Exception):
     Merely instantiating it records the current exception information, which
     will be passed back to the RPC client without exceptional logging.
     """
+
     def __init__(self):
         self._exc_info = sys.exc_info()
 
@@ -307,7 +308,7 @@ def deserialize_msg(msg):
     #      Just return the message as-is.
     #
     # 2) It's any other non-dict type.  Just return it and hope for the best.
-    #    This case covers return values from rpc.call() from before message
+    #    This case covers return values from client.call() from before message
     #    envelopes were used.  (messages to call a method were always a dict)
 
     if not isinstance(msg, dict):
@@ -364,7 +365,7 @@ class DecayingTimer(object):
 # * driver.listen*(): each call create a new 'PURPOSE_LISTEN' connection
 # * driver.send*(): a pool of 'PURPOSE_SEND' connections is used
 # * driver internally have another 'PURPOSE_LISTEN' connection dedicated
-#   to wait replies of rpc call
+#   to wait replies of client call
 PURPOSE_LISTEN = 'listen'
 PURPOSE_SEND = 'send'
 

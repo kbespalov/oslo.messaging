@@ -413,9 +413,9 @@ class TestRoutingNotifier(test_utils.BaseTestCase):
                     group='oslo_messaging_notifications')
         routing_config = r"""
 group_1:
-   rpc : foo
+   client : foo
 group_2:
-   rpc : blah
+   client : blah
         """
 
         config_file = mock.MagicMock()
@@ -434,7 +434,7 @@ group_2:
     def test_get_drivers_for_message_accepted_events(self):
         config = r"""
 group_1:
-   rpc:
+   client:
        accepted_events:
           - foo.*
           - blah.zoo.*
@@ -449,7 +449,7 @@ group_1:
                              group, "unknown", "info"))
 
         # Child of foo ...
-        self.assertEqual(['rpc'],
+        self.assertEqual(['client'],
                          self.router._get_drivers_for_message(
                              group, "foo.1", "info"))
 
@@ -459,14 +459,14 @@ group_1:
                              group, "foo", "info"))
 
         # Child of blah.zoo
-        self.assertEqual(['rpc'],
+        self.assertEqual(['client'],
                          self.router._get_drivers_for_message(
                              group, "blah.zoo.zing", "info"))
 
     def test_get_drivers_for_message_accepted_priorities(self):
         config = r"""
 group_1:
-   rpc:
+   client:
        accepted_priorities:
           - info
           - error
@@ -480,19 +480,19 @@ group_1:
                              group, None, "unknown"))
 
         # Info ...
-        self.assertEqual(['rpc'],
+        self.assertEqual(['client'],
                          self.router._get_drivers_for_message(
                              group, None, "info"))
 
         # Error (to make sure the list is getting processed) ...
-        self.assertEqual(['rpc'],
+        self.assertEqual(['client'],
                          self.router._get_drivers_for_message(
                              group, None, "error"))
 
     def test_get_drivers_for_message_both(self):
         config = r"""
 group_1:
-   rpc:
+   client:
        accepted_priorities:
           - info
        accepted_events:
@@ -520,15 +520,15 @@ group_1:
         # Happy day ...
         x = self.router._get_drivers_for_message(group, 'foo.blah', "info")
         x.sort()
-        self.assertEqual(['driver_1', 'driver_2', 'rpc'], x)
+        self.assertEqual(['driver_1', 'driver_2', 'client'], x)
 
     def test_filter_func(self):
         ext = mock.MagicMock()
-        ext.name = "rpc"
+        ext.name = "client"
 
         # Good ...
         self.assertTrue(self.router._filter_func(ext, {}, {}, 'info',
-                        None, ['foo', 'rpc']))
+                        None, ['foo', 'client']))
 
         # Bad
         self.assertFalse(self.router._filter_func(ext, {}, {}, 'info',
@@ -537,13 +537,13 @@ group_1:
     def test_notify(self):
         self.router.routing_groups = {'group_1': None, 'group_2': None}
         drivers_mock = mock.MagicMock()
-        drivers_mock.side_effect = [['rpc'], ['foo']]
+        drivers_mock.side_effect = [['client'], ['foo']]
 
         with mock.patch.object(self.router, 'plugin_manager') as pm:
             with mock.patch.object(self.router, '_get_drivers_for_message',
                                    drivers_mock):
                 self.notifier.info({}, 'my_event', {})
-                self.assertEqual(sorted(['rpc', 'foo']),
+                self.assertEqual(sorted(['client', 'foo']),
                                  sorted(pm.map.call_args[0][6]))
 
     def test_notify_filtered(self):
@@ -551,7 +551,7 @@ group_1:
                     group='oslo_messaging_notifications')
         routing_config = r"""
 group_1:
-    rpc:
+    client:
         accepted_events:
           - my_event
     rpc2:
@@ -569,7 +569,7 @@ group_1:
         bar_driver = mock.Mock()
 
         pm = dispatch.DispatchExtensionManager.make_test_instance(
-            [extension.Extension('rpc', None, None, rpc_driver),
+            [extension.Extension('client', None, None, rpc_driver),
              extension.Extension('rpc2', None, None, rpc2_driver),
              extension.Extension('bar', None, None, bar_driver)],
         )

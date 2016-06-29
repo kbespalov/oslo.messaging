@@ -97,6 +97,8 @@ to - primitive types.
 """
 import functools
 import inspect
+import json
+import os
 import time
 import uuid
 
@@ -111,11 +113,12 @@ import sys
 from oslo_messaging._i18n import _LE
 from oslo_messaging.rpc import dispatcher as rpc_dispatcher
 from oslo_messaging import server as msg_server
+from oslo_messaging.target import Target
 
 LOG = logging.getLogger(__name__)
 
 
-class TimeCyclicList(object):
+class TimeLoop(object):
     """
      The collection to persisting a time distribution values with
      specified time interval (time loop) and granularity.
@@ -124,49 +127,59 @@ class TimeCyclicList(object):
      then self.distribution is list of 12 buckets:
      [0-5 min] [5-10 min] [10-15 min] ... [55-60 min]
      to each of them we are accumulate values by adding.
-
     """
 
-    def __init__(self, time_loop, granularity):
-        self.time_loop = time_loop
-        self.granularity = granularity
+    def __init__(self, loop_time, loop_granularity):
+        self.loop_time = loop_time
+        self.granularity = loop_granularity
         self.start_time = time.time()
         self.latest_action_time = 0
         self.latest_index = 0
         self.total = 0
         self.min, self.max = 0, 0
-        self.distribution = [0] * (time_loop / granularity)
+        self.prev_loop_time = 0
+        self.distribution = [0] * (loop_time / loop_granularity)
 
     def get_index(self, time_value):
-        return int((time_value % self.time_loop) / self.granularity)
+        return int((time_value % self.loop_time) / self.granularity)
 
     def add(self, value):
         if self.min > value or not self.min:
             self.min = value
         if self.max < value:
             self.max = value
-        self.latest_action_time = time.time()
-        time_index = self.get_index(self.latest_action_time)
-        if time_index < self.latest_index:
-            self.flush()
-        self.distribution[time_index] += value
+        cur_time = time.time()
+        time_index = self.get_index(cur_time)
+        if time_index < self.latest_index or self.is_loop_expired(cur_time):
+            self.flush(cur_time)
+        if time_index > self.latest_index:
+            self.distribution[time_index] = value
+        else:
+            self.distribution[time_index] += value
+        if time_index - self.latest_index > 1:
+            for i in range(self.latest_index + 1, time_index):
+                self.distribution[i] = 0
         self.latest_index = time_index
+        self.latest_action_time = cur_time
 
-    def __repr__(self):
-        current_total = self.total + sum(self.distribution)
+    def is_loop_expired(self, current_time):
+        return current_time - self.latest_action_time > self.loop_time
+
+    def dump(self):
+        current_total = self.total + sum(self.distribution[:self.latest_index + 1])
         return {'start_time': self.start_time,
-                'last_action_time': self.latest_action_time,
+                'last_action': self.latest_action_time,
                 'min': self.min,
                 'max': self.max,
-                'duration': self.time_loop,
-                'granularity': self.granularity,
                 'total': current_total,
-                'current_time': time.time(),
-                'distribution': self.distribution}
+                'distribution': self.distribution[self.latest_index + 1:] + self.distribution[:self.latest_index + 1]}
 
-    def flush(self):
-        self.total += sum(self.distribution)
-        for i in range(len(self.distribution)):
+    def flush(self, ctime):
+        # todo: fix overlooping   loop_3 | loop_0 swap() loop_0 | loop_3 - wrong
+        self.min = self.max = 0
+        self.total += sum(self.distribution[:self.latest_index])
+        self.prev_loop_time = self.latest_action_time
+        for i in xrange(0, self.get_index(ctime)):
             self.distribution[i] = 0
 
 
@@ -174,29 +187,29 @@ class RPCStateEndpoint(object):
     # namespace is used in order to avoid a methods name conflicts
     # target = Target(namespace="oslo.messaging.rpc_state")
 
-    def __init__(self, server, target, time_loop=3600, granularity=60):
+    def __init__(self, server, target, loop_time=120, granularity=5):
         self.rpc_server = server
         self.target = target
         self.endpoints_stats = {}
-        self.register_endpoints()
-        self.id = uuid.uuid4()
-        # properties for TimeSeriesCollector
-        self.time_loop = time_loop
+        self.start_time = time.time()
+        self.loop_time = loop_time
         self.granularity = granularity
-
-        self.info = {'worker_id': self.id,
+        self.register_endpoints()
+        self.worker_pid = os.getpid()
+        self.info = {'wid': self.worker_pid,
                      'topic': self.target.topic,
-                     'exchange': self.target.exchange,
-                     'server': self.target.server}
+                     'server': self.target.server,
+                     'loop_time': self.loop_time,
+                     'granularity': self.granularity}
 
     def register_endpoints(self):
 
         def rpc_stats_aware(stats, method):
             method_name = method.__name__
-            time_series = TimeCyclicList(self.time_loop, self.granularity)
-            calls_series = TimeCyclicList(self.time_loop, self.granularity)
-            stats[method_name] = {'time_series': time_series,
-                                  'calls_series': calls_series}
+            time_series = TimeLoop(self.loop_time, self.granularity)
+            calls_series = TimeLoop(self.loop_time, self.granularity)
+            stats[method_name] = {'ts': time_series,
+                                  'cs': calls_series}
 
             @functools.wraps(method)
             def wrap(*args, **kwargs):
@@ -217,34 +230,34 @@ class RPCStateEndpoint(object):
                               inspect.ismethod(getattr(endpoint, attr)) and
                               not attr.startswith("_")]
             for name in public_methods:
-                w = rpc_stats_aware(e_stat, getattr(endpoint, name))
-                setattr(endpoint, name, w)
-
+                aware = rpc_stats_aware(e_stat, getattr(endpoint, name))
+                setattr(endpoint, name, aware)
             self.endpoints_stats[type(endpoint).__name__] = e_stat
 
-    def rpc_echo_reply(self, ctx):
-        return self.info
+    def rpc_echo_reply(self, ctx, request_time):
+        response = {'req_time': request_time}
+        response.update(self.info)
+        return response
 
-    def _make_sample(self):
-        msg = dict()
+    def dump_endpoints_stats(self, sample):
+        endpoints_sample = sample['endpoints'] = {}
+        for endpoint in self.endpoints_stats:
+            endpoints_sample[endpoint] = {}
+            for method in self.endpoints_stats[endpoint]:
+                endpoints_sample[endpoint][method] = {}
+                for k, m in self.endpoints_stats[endpoint][method].items():
+                    endpoints_sample[endpoint][method][k] = m.dump()
 
-        executor_stat = dict()
-        stats = self.rpc_server._work_executor.statistics
-        executor_stat['failures'] = stats.failures
-        executor_stat['executed'] = stats.executed
-        executor_stat['runtime'] = stats.runtime
-        avg = stats.average_runtime if stats.executed else 0
-        executor_stat['average_runtime'] = avg
+    def runtime(self):
+        return time.time() - self.start_time
 
-        msg['executor_stats'] = executor_stat
-        msg['endpoint_stats'] = self.endpoints_stats
-
-        return msg
-
-    def rpc_stats(self, ctx):
-        msg = self._make_sample()
-        msg.update(self.info)
-        return msg
+    def rpc_stats(self, ctx, request_time):
+        sample = dict(msg_type='sample',
+                      req_time=request_time,
+                      runtime=self.runtime())
+        sample.update(self.info)
+        self.dump_endpoints_stats(sample)
+        return sample
 
 
 class RPCServer(msg_server.MessageHandlingServer):

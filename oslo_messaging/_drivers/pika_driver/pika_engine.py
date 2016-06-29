@@ -64,7 +64,7 @@ class PikaEngine(object):
             conf.oslo_messaging_pika.host_connection_reconnect_delay
         )
 
-        # processing rpc options
+        # processing client options
         self.default_rpc_exchange = (
             conf.oslo_messaging_pika.default_rpc_exchange
         )
@@ -270,7 +270,7 @@ class PikaEngine(object):
             )
 
     def get_rpc_exchange_name(self, exchange):
-        """Returns RabbitMQ exchange name for given rpc request
+        """Returns RabbitMQ exchange name for given client request
 
         :param exchange: String, oslo.messaging target's exchange
 
@@ -280,7 +280,7 @@ class PikaEngine(object):
 
     @staticmethod
     def get_rpc_queue_name(topic, server, no_ack, worker=False):
-        """Returns RabbitMQ queue name for given rpc request
+        """Returns RabbitMQ queue name for given client request
 
         :param topic: String, oslo.messaging target's topic
         :param server: String, oslo.messaging target's server

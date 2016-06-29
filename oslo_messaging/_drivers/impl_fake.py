@@ -174,7 +174,7 @@ class FakeDriver(base.BaseDriver):
 
     @staticmethod
     def _check_serialize(message):
-        """Make sure a message intended for rpc can be serialized.
+        """Make sure a message intended for client can be serialized.
 
         We specifically want to use json, not our own jsonutils because
         jsonutils has some extra logic to automatically convert objects to

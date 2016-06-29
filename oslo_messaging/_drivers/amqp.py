@@ -16,9 +16,9 @@
 #    under the License.
 
 """
-Shared code between AMQP based openstack.common.rpc implementations.
+Shared code between AMQP based openstack.common.client implementations.
 
-The code in this module is shared between the rpc implementations based on
+The code in this module is shared between the client implementations based on
 AMQP. Specifically, this includes impl_kombu.  impl_carrot also
 uses AMQP, but is deprecated and predates this code.
 """
@@ -53,7 +53,7 @@ UNIQUE_ID = '_unique_id'
 
 
 class RpcContext(rpc_common.CommonRpcContext):
-    """Context that supports replying to a rpc.call."""
+    """Context that supports replying to a client.call."""
     def __init__(self, **kwargs):
         self.msg_id = kwargs.pop('msg_id', None)
         self.reply_q = kwargs.pop('reply_q', None)

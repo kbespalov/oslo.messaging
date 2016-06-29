@@ -11,6 +11,7 @@
 #    under the License.
 
 import eventlet
+
 eventlet.monkey_patch()
 
 import argparse
@@ -45,13 +46,13 @@ IS_RUNNING = True
 SERVERS = []
 
 USAGE = """ Usage: ./simulator.py [-h] [--url URL] [-d DEBUG]\
- {notify-server,notify-client,rpc-server,rpc-client} ...
+ {notify-server,notify-client,client-server,client-client} ...
 
 Usage example:
  python tools/simulator.py\
- --url rabbit://stackrabbit:secretrabbit@localhost/ rpc-server
+ --url rabbit://stackrabbit:secretrabbit@localhost/ client-server
  python tools/simulator.py\
- --url rabbit://stackrabbit:secretrabbit@localhost/ rpc-client\
+ --url rabbit://stackrabbit:secretrabbit@localhost/ client-client\
  --exit-wait 15000 -p 64 -m 64"""
 
 MESSAGES_LIMIT = 1000
@@ -300,7 +301,7 @@ class RpcEndpoint(object):
         server_ts = time.time()
 
         LOG.debug("######## RCV: %s", message)
-
+        time.sleep(0.3)
         reply = update_message(message, server_ts=server_ts)
         self.received_messages.push(reply)
 
@@ -383,7 +384,7 @@ def generate_messages(messages_count):
     for i in range(messages_count):
         length = RANDOM_GENERATOR()
         msg = ''.join(random.choice(
-                      string.ascii_lowercase) for x in range(length))
+            string.ascii_lowercase) for x in range(length))
         MESSAGES.append(msg)
 
     LOG.info("Messages has been prepared")
@@ -398,6 +399,7 @@ def wrap_sigexit(f):
                      e.signo)
             for server in SERVERS:
                 server.stop()
+
     return inner
 
 
@@ -575,7 +577,7 @@ def _setup_logging(is_debug):
         format="%(asctime)-15s %(levelname)s %(name)s %(message)s")
     logging.getLogger().handlers[0].addFilter(LoggingNoParsingFilter())
     for i in ['kombu', 'amqp', 'stevedore', 'qpid.messaging'
-              'oslo.messaging._drivers.amqp', ]:
+                                            'oslo.messaging._drivers.amqp', ]:
         logging.getLogger(i).setLevel(logging.WARN)
 
 
@@ -607,7 +609,7 @@ def main():
                         help="Oslo messaging config file")
 
     subparsers = parser.add_subparsers(dest='mode',
-                                       help='notify/rpc server/client mode')
+                                       help='notify/client server/client mode')
 
     server = subparsers.add_parser('notify-server')
     server.add_argument('-w', dest='wait_before_answer', type=int, default=-1)
@@ -627,13 +629,13 @@ def main():
     client.add_argument('--timeout', dest='timeout', type=int, default=3,
                         help='client timeout')
 
-    server = subparsers.add_parser('rpc-server')
+    server = subparsers.add_parser('client-server')
     server.add_argument('-w', dest='wait_before_answer', type=int, default=-1)
     server.add_argument('-e', '--executor', dest='executor',
                         type=str, default='eventlet',
                         help='name of a message executor')
 
-    client = subparsers.add_parser('rpc-client')
+    client = subparsers.add_parser('client-client')
     client.add_argument('-p', dest='threads', type=int, default=1,
                         help='number of client threads')
     client.add_argument('-m', dest='messages', type=int, default=1,
@@ -644,7 +646,7 @@ def main():
                         help='client timeout')
     client.add_argument('--exit-wait', dest='exit_wait', type=int, default=0,
                         help='Keep connections open N seconds after calls '
-                        'have been done')
+                             'have been done')
     client.add_argument('--is-cast', dest='is_cast', type=bool, default=False,
                         help='Use `call` or `cast` RPC methods')
     client.add_argument('--is-fanout', dest='is_fanout', type=bool,
@@ -657,13 +659,13 @@ def main():
     if args.config_file:
         cfg.CONF(["--config-file", args.config_file])
 
-    if args.mode in ['rpc-server', 'rpc-client']:
+    if args.mode in ['client-server', 'client-client']:
         transport = messaging.get_transport(cfg.CONF, url=args.url)
     else:
         transport = messaging.get_notification_transport(cfg.CONF,
                                                          url=args.url)
 
-    if args.mode in ['rpc-client', 'notify-client']:
+    if args.mode in ['client-client', 'notify-client']:
         # always generate maximum number of messages for duration-limited tests
         generate_messages(MESSAGES_LIMIT if args.duration else args.messages)
 
@@ -675,7 +677,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    if args.mode == 'rpc-server':
+    if args.mode == 'client-server':
         target = messaging.Target(topic=args.topic, server=args.server)
         if args.url.startswith('zmq'):
             cfg.CONF.rpc_zmq_matchmaker = "redis"
@@ -702,11 +704,11 @@ def main():
                              args.timeout, args.duration)
         show_client_stats(CLIENTS, args.json_filename)
 
-    elif args.mode == 'rpc-client':
+    elif args.mode == 'client-client':
         targets = [target.partition('.')[::2] for target in args.targets]
         targets = [messaging.Target(
             topic=topic, server=server_name, fanout=args.is_fanout) for
-            topic, server_name in targets]
+                   topic, server_name in targets]
         spawn_rpc_clients(args.threads, transport, targets,
                           args.wait_after_msg, args.timeout, args.is_cast,
                           args.messages, args.duration)

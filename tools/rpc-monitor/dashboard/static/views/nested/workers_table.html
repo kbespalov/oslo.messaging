@@ -1,0 +1,23 @@
+<table class="table table-striped">
+    <thead>
+    <tr>
+        <th>host</th>
+        <th>worker</th>
+        <th>last response</th>
+        <th>latency</th>
+        <th>total calls</th>
+        <th>per call</th>
+        <th>runtime</th>
+    </tr>
+    </thead>
+
+    <tbody ng-repeat="sample in grouped_by_workers[topic]">
+    <td>{{sample.host}}</td>
+    <td>{{sample.wid}}</td>
+    <td>{{sample.pong_time}}</td>
+    <td>{{sample.latency}}</td>
+    <td>{{sample.executed}}</td>
+    <td>{{sample.avg}}</td>
+    <td>{{sample.runtime}}</td>
+    </tbody>
+</table>

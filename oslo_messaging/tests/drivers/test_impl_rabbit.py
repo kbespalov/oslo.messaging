@@ -491,7 +491,7 @@ class TestSendReceive(test_utils.BaseTestCase):
 
         target = oslo_messaging.Target(topic='testtopic')
 
-        listener = driver.listen(target, None, None)._poll_style_listener
+        listener = driver.listen(target, 1, None)._poll_style_listener
 
         senders = []
         replies = []

@@ -138,15 +138,15 @@ class ObsoleteReplyQueuesCache(object):
     in this case or until rabbit recovers.
 
     But in case of the reply queue is unreachable because the
-    rpc client is really gone, we can have a ton of reply to send
+    client client is really gone, we can have a ton of reply to send
     waiting 60 seconds.
     This leads to a starvation of connection of the pool
-    The rpc server take to much time to send reply, other rpc client will
+    The client server take to much time to send reply, other client client will
     raise TimeoutError because their don't receive their replies in time.
 
     This object cache stores already known gone client to not wait 60 seconds
     and hold a connection of the pool.
-    Keeping 200 last gone rpc client for 1 minute is enough
+    Keeping 200 last gone client client for 1 minute is enough
     and doesn't hold to much memory.
     """
 

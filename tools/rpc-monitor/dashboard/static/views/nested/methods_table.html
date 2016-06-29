@@ -1,0 +1,72 @@
+<table class="table">
+    <thead>
+    <tr>
+        <th rowspan="2">host</th>
+        <th rowspan="2">worker</th>
+        <th rowspan="2">endpoint</th>
+        <th rowspan="2">method</th>
+        <th rowspan="2">calls total</th>
+        <th class="text-center" colspan="6">time consumption</th>
+    </tr>
+    <tr>
+        <th>avg</th>
+        <th>min</th>
+        <th>max</th>
+        <th>total</th>
+        <th>last call</th>
+    </tr>
+    </thead>
+    <tbody ng-repeat=" sample in grouped_by_methods[topic]" ng-if="do_filter(sample)">
+
+    <tr onclick="show_charts(this)">
+        <td>{{sample.host}}</td>
+        <td>{{sample.wid}}</td>
+        <td>{{sample.endpoint}}</td>
+        <td>{{sample.method}}</td>
+        <td>{{sample.calls}}</td>
+        <td>{{sample.avg_time}}</td>
+        <td>{{sample.min_time}}</td>
+        <td>{{sample.max_time}}</td>
+        <td>{{sample.total_time}}</td>
+        <td>{{sample.last_action}}</td>
+    </tr>
+
+    <tr class="collapse out">
+        <td colspan="10">
+            <ul class="nav nav-tabs">
+                <li class="active"><a data-toggle="tab" href="#{{'charts_'+ sample.id}}">Method
+                    Stats</a></li>
+                <li><a data-toggle="tab" href="#{{'executor_'+ sample.id}}">Worker
+                    Executor</a></li>
+                <li><a data-toggle="tab" href="#{{'debug_'+ sample.id}}">Debug
+                    Mode</a></li>
+            </ul>
+            <div class="tab-content">
+                <div ng-attr-id="{{'charts_'+ sample.id}}" class="tab-pane fade in active">
+                    <canvas class="chart chart-bar" chart-data="[sample.ts]" chart-labels="sample.labels" chart-legend="true" chart-series="['time consumption']"></canvas>
+                    <canvas class="chart chart-bar" chart-data="[sample.cs]" chart-labels="sample.labels" chart-legend="true" chart-series="['calls count']"></canvas>
+                </div>
+                <div ng-attr-id="{{'debug_'+ sample.id}}" class="tab-pane fade">
+                    Not implemented yet
+                </div>
+
+                <div ng-attr-id="{{'executor_'+ sample.id}}" class="tab-pane fade">
+                    </br>
+
+                    <ul>
+                        <li><span class="label label-info">Last response time:</span> {{sample.last_update_time}}
+                        </li>
+                        <li><span class="label label-info">Total executed:</span> {{sample.executor.executed}}
+                        </li>
+                        <li><span class="label label-info">Runtime:</span> {{sample.executor.runtime}}
+                        </li>
+                        <li><span class="label label-info">Average Runtime:</span> {{sample.executor.average_runtime}}
+                        </li>
+                    </ul>
+                </div>
+
+            </div>
+        </td>
+    </tr>
+    </tbody>
+</table>

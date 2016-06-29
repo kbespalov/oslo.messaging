@@ -75,7 +75,7 @@ notification_opts = [
 
 rpc_opts = [
     cfg.IntOpt('rpc_queue_expiration', default=60,
-               help="Time to live for rpc queues without consumers in "
+               help="Time to live for client queues without consumers in "
                     "seconds."),
     cfg.StrOpt('default_rpc_exchange', default="${control_exchange}_rpc",
                help="Exchange name for sending RPC messages"),
@@ -84,12 +84,12 @@ rpc_opts = [
     cfg.IntOpt(
         'rpc_listener_prefetch_count', default=100,
         help="Max number of not acknowledged message which RabbitMQ can send "
-             "to rpc listener."
+             "to client listener."
     ),
     cfg.IntOpt(
         'rpc_reply_listener_prefetch_count', default=100,
         help="Max number of not acknowledged message which RabbitMQ can send "
-             "to rpc reply listener."
+             "to client reply listener."
     ),
     cfg.IntOpt(
         'rpc_reply_retry_attempts', default=-1,
@@ -105,7 +105,7 @@ rpc_opts = [
         'default_rpc_retry_attempts', default=-1,
         help="Reconnecting retry count in case of connectivity problem during "
              "sending RPC message, -1 means infinite retry. If actual "
-             "retry attempts in not 0 the rpc request could be processed more "
+             "retry attempts in not 0 the client request could be processed more "
              "then one time"
     ),
     cfg.FloatOpt(
