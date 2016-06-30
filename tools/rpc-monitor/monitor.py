@@ -1,9 +1,7 @@
 import json
 import logging
-import threading
 
 import time
-from collections import defaultdict
 from threading import Thread, RLock
 
 from oslo_config import cfg
@@ -77,29 +75,25 @@ class RPCStateMonitor(object):
         # the time size of buckets which divides a loop e.g [0-5][5-10]..
         granularity = sample['granularity']
 
-        for endpoint in sample['endpoints']:
-            endpoint_state = sample['endpoints'][endpoint]
-            for method in endpoint_state:
-                method_state = endpoint_state[method]
-                for metric_name in method_state:
+        for endpoint, methods in sample['endpoints'].iteritems():
+            for method, state_loop in methods.iteritems():
 
-                    # e.g. time consumption or calls distribution
-                    metric = method_state[metric_name]
-                    start_time = metric['start_time']
-                    last_action = metric['last_action']
-                    distribution = metric['distribution']
+                start_time = state_loop['start_time']
+                last_action = state_loop['last_action']
+                distribution = state_loop['distribution']
 
-                    metric_history = worker_history.path(endpoint, method, metric_name)
-                    metric_history['start_time'] = start_time
-                    metric_history['granularity'] = granularity
-                    metric_history['last_action'] = last_action
-                    timeline = metric_history.path('timeline')
+                metric_history = worker_history.path(endpoint, method)
+                metric_history['start_time'] = start_time
+                metric_history['granularity'] = granularity
+                metric_history['last_action'] = last_action
 
-                    upper_time_bucket = int((last_action - start_time) / granularity)
-                    lower_time_bucket = upper_time_bucket - duration / granularity
-                    for value in distribution:
-                        timeline[lower_time_bucket] = value
-                        lower_time_bucket += 1
+                timeline = metric_history.path('timeline')
+                # merging
+                upper_time_bucket = int((last_action - start_time) / granularity)
+                lower_time_bucket = upper_time_bucket - duration / granularity
+                for value in distribution:
+                    timeline[lower_time_bucket] = value
+                    lower_time_bucket += 1
 
     def on_sample(self, sample):
         topic, server, wid = sample['topic'], sample['server'], sample['wid']

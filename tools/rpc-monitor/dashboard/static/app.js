@@ -65,14 +65,25 @@ function RPCStateController($scope, $http, RPCStateService) {
         return res;
     };
 
-    function load_method_state(sample, dom_view) {
+    function load_method_state(sample) {
         RPCStateService.method_metrics({}, sample, function (entry) {
-            var data = entry.toJSON();
-            console.log(data);
-            sample['ats'] = data['average_ts'];
-            sample['cs'] = data['cs']['distribution'];
-            sample['labels'] = data['labels'];
-        })
+              var data = entry.toJSON();
+              console.log(data);
+              // chart values for current loop
+              sample['ats'] = data['ats'];
+              sample['cs'] = data['cs'];
+              // just update current state for row
+              sample['min'] = data['metrics']['min'];
+              sample['max'] = data['metrics']['max'];
+              sample['avg'] = data['metrics']['avg'];
+              sample['calls'] = data['metrics']['calls'];
+              sample['dev'] = data['metrics']['dev'];
+              sample['last_call'] = data['metrics']['last_call']
+
+              sample['labels'] = data['labels'];
+              // runtime values
+              sample['runtime'] = data['runtime']
+        });
     }
 
     function load_methods_state() {
@@ -83,7 +94,8 @@ function RPCStateController($scope, $http, RPCStateService) {
 
     $scope.show_charts = function (event, sample, topic) {
         sample['topic'] = topic;
-        load_method_state(sample, event.target);
+        load_method_state(sample);
+        $('#'+sample.id).collapse("toggle");
     };
 
     load_methods_state();

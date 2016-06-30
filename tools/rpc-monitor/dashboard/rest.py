@@ -1,11 +1,10 @@
 import datetime
-import json
 from math import sqrt
 
 from flask import Flask, jsonify
 from flask import request, render_template
-
 from monitor import RPCStateMonitor
+from oslo_messaging.rpc.server import loop_bucket
 
 
 def calculate_labels(granularity, loop_time, last_action):
@@ -40,16 +39,17 @@ def index():
 @app.route("/api/method/state", methods=['POST'])
 def get_method_state():
     data = request.json
+
     topic, host, wid = data['topic'], data['host'], data['wid']
     endpoint, method = data['endpoint'], data['method']
 
     w_state = monitor.actual_state[topic][host][wid]
     m_state = w_state['endpoints'][endpoint][method]
 
-    g, l, a = w_state['granularity'], w_state['loop_time'], m_state['cs']['last_action']
+    g, l, a = w_state['granularity'], w_state['loop_time'], m_state['last_action']
     labels = calculate_labels(g, l, a)
-    if 'average_ts' not in m_state:
-        calculate_metrics(m_state)
+    m_state.setdefault('ats', calculate_metrics(m_state))
+    m_state.setdefault('cs', [bucket[loop_bucket.CNT] for bucket in m_state['distribution']])
     m_state['labels'] = labels
     return jsonify(m_state)
 
@@ -74,17 +74,23 @@ def format_timestamp(timestamp, fmt='%m-%d %H:%M:%S', absolute=False):
 
 
 def calculate_metrics(statistics):
-    ts_dist = statistics['ts']['distribution']
-    cs_dist = statistics['cs']['distribution']
-    time_total = sum(ts_dist)
-    call_total = sum(cs_dist)
+    buckets = statistics['distribution']
+
+    time_total = 0
+    call_total = 0
+
+    for bucket in buckets:
+        call_total += bucket[loop_bucket.CNT]
+        time_total += bucket[loop_bucket.SUM]
+
     sample_avg = time_total / (call_total or 1)
     averaged_ts = []
 
     quadratic_subs = 0
     non_empty_buckets = 0
-    for i in range(len(cs_dist)):
-        averaged = ts_dist[i] / (cs_dist[i] or 1)
+
+    for bucket in buckets:
+        averaged = bucket[loop_bucket.SUM] / (bucket[loop_bucket.CNT] or 1)
         if averaged > 0:
             quadratic_subs += (averaged - sample_avg) ** 2
             non_empty_buckets += 1
@@ -92,17 +98,17 @@ def calculate_metrics(statistics):
 
     deviation = 0
     if non_empty_buckets > 1:
-        deviation = sqrt(sample_avg / (non_empty_buckets - 1))
+        deviation = sqrt(sample_avg / non_empty_buckets)
 
-    statistics['average_ts'] = averaged_ts
+    statistics['ats'] = averaged_ts
     metrics = statistics['metrics'] = {
         'avg': round(sample_avg, 3),
-        'min': round(statistics['ts']['min'], 3),
-        'max': round(statistics['ts']['max'], 3),
+        'min': round(min(b[loop_bucket.MIN] for b in buckets), 3),
+        'max': round(max(b[loop_bucket.MAX] for b in buckets), 3),
         'dev': round(deviation, 3),
         'time': round(time_total, 3),
         'calls': call_total,
-        'last_call': format_timestamp(statistics['ts']['last_action'])
+        'last_call': format_timestamp(statistics['last_action'])
     }
     return metrics
 
@@ -121,20 +127,23 @@ def group_by_topic():
         methods_state = topic_state['methods'] = []
         for host, workers in hosts.iteritems():
             for worker, state in workers.iteritems():
-                latency = round(state['resp_time'] - state['req_time'], 3)
+
                 w_state = {'time': 0, 'calls': 0, 'min': 0, 'max': 0}
+                latency = round(state['resp_time'] - state['req_time'], 3)
+
                 for endpoint, methods in state['endpoints'].iteritems():
-                    for method, statistics in methods.iteritems():
-                        method_state = {'endpoint': endpoint,
+                    for method, stats in methods.iteritems():
+                        method_id = '-'.join([endpoint, host, str(worker), method])
+                        method_state = {'id': method_id,
+                                        'endpoint': endpoint,
                                         'method': method,
                                         'host': host,
                                         'wid': worker}
-                        # metrics are reset on each incoming msg
-                        # with different state of the method
-                        if 'metrics' not in statistics:
-                            metrics = calculate_metrics(statistics)
+
+                        if 'metrics' not in stats:
+                            metrics = calculate_metrics(stats)
                         else:
-                            metrics = statistics['metrics']
+                            metrics = stats['metrics']
 
                         method_state.update(metrics)
                         methods_state.append(method_state)
@@ -154,55 +163,10 @@ def group_by_topic():
     return jsonify(response)
 
 
-# return jsonify(monitor.actual_state)
-# response = {}
-# for topic in monitor.actual_state:
-#     topic_response = response[topic] = []
-#     for host in monitor.actual_state[topic]:
-#         for worker in monitor.actual_state[topic][host]:
-#             worker_stat = monitor.actual_state[topic][host][worker]
-#             executor_stat = worker_stat['executor']
-#             for endpoint in worker_stat['endpoints']:
-#                 for method in worker_stat['endpoints'][endpoint]:
-#                     stat = worker_stat['endpoints'][endpoint][method]
-#                     calls_series = stat['cs']
-#                     time_series = stat['ts']
-#                     avg_time = time_series['total'] / (
-#                         calls_series['total'] or 1)
-#                     topic_response.append({
-#                         'id': topic + host + str(worker) + endpoint + method,
-#                         'loop_time': worker_stat['loop_time'],
-#                         'host': host,
-#                         'worker': worker,
-#                         'endpoint': endpoint,
-#                         'method': method + "()",
-#                         'last_update_time': datetime.datetime.fromtimestamp(
-#                             worker_stat['last_update_time']
-#                         ).strftime('%m-%d %H:%M:%S'),
-#                         'executor': executor_stat,
-#                         'total_calls': calls_series['total'],
-#                         'total_time': round(time_series['total'], 3),
-#                         'calls_distribution': calls_series['distribution'],
-#                         'time_distribution': time_series['distribution'],
-#                         'time_labels': calc_labels(time_series),
-#                         'avg_time': round(avg_time, 3),
-#                         'max_time': round(time_series['max'], 3),
-#                         'min_time': round(time_series['min'], 3),
-#                         'last_action': datetime.datetime.fromtimestamp(
-#                             time_series['last_action']
-#                         ).strftime('%m-%d %H:%M:%S') if time_series['last_action'] else '-'
-#                     })
-
-
-@app.route("/api/servers/<string:server_topic>/ping", methods=['POST'])
-def ping(server_topic):
-    pass
-
-
 if __name__ == "__main__":
-    monitor = RPCStateMonitor('localhost', 5673,
-                              'test',
-                              'test',
+    monitor = RPCStateMonitor('localhost', 5672,
+                              'guest',
+                              'guest',
                               update_time=10)
 
 app.run()

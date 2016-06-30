@@ -100,7 +100,6 @@ import inspect
 import json
 import os
 import time
-import uuid
 
 __all__ = [
     'get_rpc_server',
@@ -109,13 +108,32 @@ __all__ = [
 
 import logging
 import sys
-
 from oslo_messaging._i18n import _LE
-from oslo_messaging.rpc import dispatcher as rpc_dispatcher
+import oslo_messaging.rpc
 from oslo_messaging import server as msg_server
 from oslo_messaging.target import Target
 
 LOG = logging.getLogger(__name__)
+
+
+class loop_bucket(object):
+    MIN = 0
+    MAX = 1
+    SUM = 2
+    CNT = 3
+
+    @classmethod
+    def set(cls, bucket, value):
+        bucket[cls.SUM] = value
+        bucket[cls.CNT] = 1
+        bucket[cls.MAX] = bucket[cls.MIN] = value
+
+    @classmethod
+    def add(cls, bucket, value):
+        bucket[cls.SUM] += value
+        bucket[cls.CNT] += 1
+        bucket[cls.MIN] = min(bucket[cls.MIN], value)
+        bucket[cls.MAX] = max(bucket[cls.MAX], value)
 
 
 class TimeLoop(object):
@@ -135,52 +153,70 @@ class TimeLoop(object):
         self.start_time = time.time()
         self.latest_action_time = 0
         self.latest_index = 0
-        self.total = 0
-        self.min, self.max = 0, 0
+        self.total_sum, self.total_calls = 0, 0
+        self.global_min, self.global_max = 0, 0
         self.prev_loop_time = 0
-        self.distribution = [0] * (loop_time / loop_granularity)
+        self.buckets_size = (loop_time / loop_granularity)
+        self.buckets = []
+        for _ in range(0, self.buckets_size):
+            self.buckets.append([0, 0, 0, 0])
 
     def get_index(self, time_value):
         return int((time_value % self.loop_time) / self.granularity)
 
     def add(self, value):
-        if self.min > value or not self.min:
-            self.min = value
-        if self.max < value:
-            self.max = value
+
+        self.global_max = max(value, self.global_max)
+        self.global_min = min(value, self.global_min) or value
+
         cur_time = time.time()
         time_index = self.get_index(cur_time)
+        bucket = self.buckets[time_index]
+
         if time_index < self.latest_index or self.is_loop_expired(cur_time):
             self.flush(cur_time)
+
         if time_index > self.latest_index:
-            self.distribution[time_index] = value
+            loop_bucket.set(bucket, value)
         else:
-            self.distribution[time_index] += value
+            loop_bucket.add(bucket, value)
+
         if time_index - self.latest_index > 1:
             for i in range(self.latest_index + 1, time_index):
-                self.distribution[i] = 0
+                self.buckets[i] = [0, 0, 0, 0]
+
+        self.total_sum += value
+        self.total_calls += 1
         self.latest_index = time_index
         self.latest_action_time = cur_time
 
     def is_loop_expired(self, current_time):
         return current_time - self.latest_action_time > self.loop_time
 
+    def straighten_loop(self):
+        straighten = []
+        start = self.latest_index
+        for i in xrange(self.buckets_size):
+            start = (start + 1) % self.buckets_size
+            straighten.append(self.buckets[start])
+        return straighten
+
     def dump(self):
-        current_total = self.total + sum(self.distribution[:self.latest_index + 1])
         return {'start_time': self.start_time,
                 'last_action': self.latest_action_time,
-                'min': self.min,
-                'max': self.max,
-                'total': current_total,
-                'distribution': self.distribution[self.latest_index + 1:] + self.distribution[:self.latest_index + 1]}
+                'runtime': {
+                    'min': self.global_min,
+                    'max': self.global_max,
+                    'calls': self.total_calls,
+                    'sum': self.total_sum
+                },
+                'distribution': self.straighten_loop()}
 
     def flush(self, ctime):
-        # todo: fix overlooping   loop_3 | loop_0 swap() loop_0 | loop_3 - wrong
-        self.min = self.max = 0
-        self.total += sum(self.distribution[:self.latest_index])
         self.prev_loop_time = self.latest_action_time
-        for i in xrange(0, self.get_index(ctime)):
-            self.distribution[i] = 0
+        flush_to = self.buckets_size if self.is_loop_expired(ctime) else self.get_index(ctime)
+        for i in xrange(0, flush_to):
+            self.buckets[i] = [0, 0, 0, 0]
 
 
 class RPCStateEndpoint(object):
@@ -206,10 +242,8 @@ class RPCStateEndpoint(object):
 
         def rpc_stats_aware(stats, method):
             method_name = method.__name__
-            time_series = TimeLoop(self.loop_time, self.granularity)
-            calls_series = TimeLoop(self.loop_time, self.granularity)
-            stats[method_name] = {'ts': time_series,
-                                  'cs': calls_series}
+            loop = TimeLoop(self.loop_time, self.granularity)
+            stats[method_name] = loop
 
             @functools.wraps(method)
             def wrap(*args, **kwargs):
@@ -217,8 +251,7 @@ class RPCStateEndpoint(object):
                 res = method(*args, **kwargs)
                 end = time.time()
                 duration = end - start
-                time_series.add(duration)
-                calls_series.add(1)
+                loop.add(duration)
                 return res
 
             return wrap
@@ -241,12 +274,10 @@ class RPCStateEndpoint(object):
 
     def dump_endpoints_stats(self, sample):
         endpoints_sample = sample['endpoints'] = {}
-        for endpoint in self.endpoints_stats:
+        for endpoint, methods in self.endpoints_stats.iteritems():
             endpoints_sample[endpoint] = {}
-            for method in self.endpoints_stats[endpoint]:
-                endpoints_sample[endpoint][method] = {}
-                for k, m in self.endpoints_stats[endpoint][method].items():
-                    endpoints_sample[endpoint][method][k] = m.dump()
+            for method, loop in methods.iteritems():
+                endpoints_sample[endpoint][method] = loop.dump()
 
     def runtime(self):
         return time.time() - self.start_time
@@ -281,7 +312,7 @@ class RPCServer(msg_server.MessageHandlingServer):
         failure = None
         try:
             res = self.dispatcher.dispatch(message)
-        except rpc_dispatcher.ExpectedException as e:
+        except oslo_messaging.ExpectedException as e:
             failure = e.exc_info
             LOG.debug(u'Expected exception during message handling (%s)', e)
         except Exception:
@@ -328,7 +359,7 @@ def get_rpc_server(transport, target, endpoints,
     :param serializer: an optional entity serializer
     :type serializer: Serializer
     """
-    dispatcher = rpc_dispatcher.RPCDispatcher(endpoints, serializer)
+    dispatcher = oslo_messaging.RPCDispatcher(endpoints, serializer)
     return RPCServer(transport, target, dispatcher, executor)
 
 
@@ -355,7 +386,7 @@ def expected_exceptions(*exceptions):
             # derived from the args passed to us will be
             # ignored and thrown as normal.
             except exceptions:
-                raise rpc_dispatcher.ExpectedException()
+                raise oslo_messaging.ExpectedException()
 
         return inner
 

@@ -15,6 +15,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+from oslo_messaging.rpc.server import RPCStateEndpoint
 
 __all__ = [
     'NoSuchMethod',
@@ -45,6 +46,7 @@ class ExpectedException(Exception):
     information, which  will be passed back to the RPC client without
     exceptional logging.
     """
+
     def __init__(self):
         self.exc_info = sys.exc_info()
 
@@ -113,7 +115,11 @@ class RPCDispatcher(dispatcher.DispatcherBase):
         return utils.version_is_compatible(endpoint_version, version)
 
     def _do_dispatch(self, endpoint, method, ctxt, args):
-        ctxt = self.serializer.deserialize_context(ctxt)
+        # NOTE(kbespalov): prevent context deserialization
+        # for RPCStateEndpoint in order to eliminate conflicts
+        # with a custom deserializers.
+        if not isinstance(endpoint, RPCStateEndpoint):
+            ctxt = self.serializer.deserialize_context(ctxt)
         new_args = dict()
         for argname, arg in six.iteritems(args):
             new_args[argname] = self.serializer.deserialize_entity(ctxt, arg)
@@ -143,7 +149,7 @@ class RPCDispatcher(dispatcher.DispatcherBase):
                 target = self._default_target
 
             if not (self._is_namespace(target, namespace) and
-                    self._is_compatible(target, version)):
+                        self._is_compatible(target, version)):
                 continue
 
             if hasattr(endpoint, method):
