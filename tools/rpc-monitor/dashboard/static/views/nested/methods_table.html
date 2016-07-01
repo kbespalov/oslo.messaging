@@ -1,4 +1,4 @@
-<table class="table">
+<table class="table sortable">
     <thead>
         <tr>
             <th rowspan="2">host</th>
@@ -16,10 +16,9 @@
             <th>last call</th>
         </tr>
     </thead>
-    <tbody ng-repeat="sample in state.methods">
-
+    <tbody ng-repeat="sample in state.methods" >
         <tr ng-click="show_charts($event,sample,topic)">
-            <td>{{sample.host}}</td>
+            <td rowspan="2">{{sample.host}}</td>
             <td>{{sample.wid}}</td>
             <td>{{sample.endpoint}}</td>
             <td>{{sample.method}}</td>
@@ -31,25 +30,24 @@
             <td>{{sample.last_call}}</td>
         </tr>
         <tr ng-if="sample.ats != undefined" class="collapse out" id="{{sample.id}}">
-
             <td colspan="10">
-              <div class="well well-lg">
-                <p> <b> all time statistics: </b> </p>
-                <ul class="list-group">
-                    <li class="list-group-item">
-                        <span class="badge">{{ sample.runtime.calls}}</span> total calls
-                    </li>
-                    <li class="list-group-item">
-                        <span class="badge">{{ sample.runtime.max }}</span> global max (s)
-                    </li>
-                    <li class="list-group-item">
-                        <span class="badge">{{ sample.runtime.min }} </span> global min (s)
-                    </li>
-                    <li class="list-group-item">
-                        <span class="badge"> {{sample.runtime.sum / sample.runtime.calls | number: 3}} </span> per call (s)
-                    </li>
-                </ul>
-              </div>
+                <div class="well well-lg">
+                    <p><b> all time statistics: </b></p>
+                    <ul class="list-group">
+                        <li class="list-group-item">
+                            <span class="badge">{{ sample.runtime.calls}}</span> total calls
+                        </li>
+                        <li class="list-group-item">
+                            <span class="badge">{{ sample.runtime.max }}</span> global max (s)
+                        </li>
+                        <li class="list-group-item">
+                            <span class="badge">{{ sample.runtime.min }} </span> global min (s)
+                        </li>
+                        <li class="list-group-item">
+                            <span class="badge"> {{sample.runtime.sum / sample.runtime.calls | number: 3}} </span> per call (s)
+                        </li>
+                    </ul> 
+                </div>
                 <canvas class="chart chart-bar" chart-data="[sample.cs]" chart-labels="sample.labels" chart-legend="true" chart-series="['calls count']"></canvas>
                 <canvas class="chart chart-bar" chart-data="[sample.ats]" chart-labels="sample.labels" chart-legend="true" chart-series="['avg time consumption']"></canvas>
             </td>

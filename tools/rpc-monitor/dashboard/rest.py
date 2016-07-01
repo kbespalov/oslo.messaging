@@ -1,5 +1,6 @@
 import datetime
 from math import sqrt
+from urllib import urlencode
 
 from flask import Flask, jsonify
 from flask import request, render_template
@@ -98,7 +99,7 @@ def calculate_metrics(statistics):
 
     deviation = 0
     if non_empty_buckets > 1:
-        deviation = sqrt(sample_avg / non_empty_buckets)
+        deviation = sqrt(quadratic_subs / non_empty_buckets)
 
     statistics['ats'] = averaged_ts
     metrics = statistics['metrics'] = {
@@ -120,6 +121,7 @@ def global_state():
 
 @app.route('/api/methods/state', methods=['GET'])
 def group_by_topic():
+
     response = {}
     for topic, hosts in monitor.actual_state.iteritems():
         topic_state = response[topic] = {}
@@ -133,7 +135,7 @@ def group_by_topic():
 
                 for endpoint, methods in state['endpoints'].iteritems():
                     for method, stats in methods.iteritems():
-                        method_id = '-'.join([endpoint, host, str(worker), method])
+                        method_id = '-'.join([endpoint, str(worker), method])
                         method_state = {'id': method_id,
                                         'endpoint': endpoint,
                                         'method': method,
@@ -167,9 +169,9 @@ def group_by_topic():
 
 
 if __name__ == "__main__":
-    monitor = RPCStateMonitor('localhost', 5672,
-                              'guest',
-                              'guest',
+    monitor = RPCStateMonitor('192.168.122.101', 5672,
+                              'test',
+                              'test',
                               update_time=10)
 
 app.run()

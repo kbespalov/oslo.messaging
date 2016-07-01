@@ -51,6 +51,9 @@ function RPCStateController($scope, $http, RPCStateService) {
     $scope.methods_state = {};
     $scope.pings = {};
     $scope.filter_query = "";
+    $scope.enable_table_sorting = function(){
+    $.bootstrapSortable(true);
+    }
 
     $scope.do_filter = function (sample) {
         if ($scope.filter_query == "") {
@@ -96,6 +99,7 @@ function RPCStateController($scope, $http, RPCStateService) {
         sample['topic'] = topic;
         load_method_state(sample);
         $('#'+sample.id).collapse("toggle");
+        $.bootstrapSortable(true);
     };
 
     load_methods_state();

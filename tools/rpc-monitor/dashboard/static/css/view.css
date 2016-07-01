@@ -1,4 +1,7 @@
-
+body {
+    background-image: url(../images/weather.png); /* Путь к фоновому изображению */
+    background-color: #c7b39b; /* Цвет фона */
+}
 
 .top-buffer {
     margin-top: 20px;
@@ -16,10 +19,6 @@
 .hidden {
     display: none;
     visibility: hidden;
-}
-
-.tab-content {
-    padding: 5px;
 }
 
 div.card {
