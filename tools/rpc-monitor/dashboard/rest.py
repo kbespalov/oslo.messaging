@@ -155,6 +155,9 @@ def group_by_topic():
 
                 resp_time = format_timestamp(state['resp_time'])
                 w_state.update({
+                    'wid': state['wid'],
+                    'host': state['server'],
+                    'avg': w_state['time'] / (w_state['calls'] or 1),
                     'latency': latency,
                     'resp_time': resp_time,
                     'runtime': format_timestamp(state['runtime'], absolute=True)
