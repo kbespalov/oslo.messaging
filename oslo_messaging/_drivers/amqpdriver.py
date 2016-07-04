@@ -1,4 +1,3 @@
-
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -12,6 +11,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import os
+import socket
+from Queue import Queue, Empty
+
+from oslo_config import cfg
+import sys
 
 __all__ = ['AMQPDriverBase']
 
@@ -23,7 +28,7 @@ import uuid
 import cachetools
 from oslo_utils import timeutils
 from six import moves
-
+from influxdb import InfluxDBClient
 import oslo_messaging
 from oslo_messaging._drivers import amqp as rpc_amqp
 from oslo_messaging._drivers import base
@@ -36,8 +41,76 @@ from oslo_messaging._i18n import _LW
 LOG = logging.getLogger(__name__)
 
 
-class AMQPIncomingMessage(base.RpcIncomingMessage):
+class InfluxDBCollector(object):
+    __instance__ = None
+    opts = [cfg.StrOpt('influx_host', default='localhost'),
+            cfg.IntOpt('influx_port', default=8086),
+            cfg.StrOpt('influx_user', default='root'),
+            cfg.StrOpt('influx_pass', default='root'),
+            cfg.StrOpt('influx_db', default='oslo_messaging')]
 
+    def __init__(self, ):
+        self.hostname = socket.gethostname()
+        self.proc_name = os.path.basename(sys.argv[0])
+        self.pid = os.getpid()
+        self.samples_queue = Queue(maxsize=100)
+        self.conf = self.setup_conf(cfg.CONF)
+        self.is_run = True
+
+        self.influx_client = InfluxDBClient(self.conf.influx_host,
+                                            self.conf.influx_port,
+                                            self.conf.influx_user,
+                                            self.conf.influx_pass,
+                                            self.conf.influx_db)
+        self.influx_client.create_database(self.conf.influx_db)
+        self.sender = threading.Thread(target=self.sample_sender)
+        self.sender.start()
+
+    def setup_conf(self, conf):
+        opt_group = cfg.OptGroup(name='oslo_metrics')
+        conf.register_group(opt_group)
+        conf.register_opts(InfluxDBCollector.opts, group=opt_group)
+        return conf.oslo_metrics
+
+    def populate_batch(self, batch, max_size=10):
+        try:
+            while 1:
+                batch.append(self.samples_queue.get(timeout=5))
+                max_size -= 1
+                if max_size == 0:
+                    break
+        except Empty:
+            pass
+
+    def sample_sender(self):
+        batch = []
+        while self.is_run:
+            batch.append(self.samples_queue.get())
+            self.populate_batch(batch)
+            self.influx_client.write_points(batch)
+            batch = []
+
+    def push(self, measurement, call_time, tags, fields):
+        tags.update({
+            'process_name': self.proc_name,
+            'pid': self.pid,
+            'host': self.hostname
+        })
+        self.samples_queue.put({
+            'measurement': measurement,
+            'time': int(call_time * 10 ** 9),
+            'tags': tags,
+            'fields': fields
+        })
+
+    @classmethod
+    def get_collector(cls):
+        if not cls.__instance__:
+            cls.__instance__ = cls()
+        return cls.__instance__
+
+
+class AMQPIncomingMessage(base.RpcIncomingMessage):
     def __init__(self, listener, ctxt, message, unique_id, msg_id, reply_q,
                  obsolete_reply_queues):
         super(AMQPIncomingMessage, self).__init__(ctxt, message)
@@ -49,6 +122,7 @@ class AMQPIncomingMessage(base.RpcIncomingMessage):
         self._obsolete_reply_queues = obsolete_reply_queues
         self.stopwatch = timeutils.StopWatch()
         self.stopwatch.start()
+        self.collector = InfluxDBCollector.get_collector()
 
     def _send_reply(self, conn, reply=None, failure=None):
         if not self._obsolete_reply_queues.reply_q_valid(self.reply_q,
@@ -71,7 +145,15 @@ class AMQPIncomingMessage(base.RpcIncomingMessage):
                       'unique_id': unique_id,
                       'reply_q': self.reply_q,
                       'elapsed': self.stopwatch.elapsed()})
-        conn.direct_send(self.reply_q, rpc_common.serialize_msg(msg))
+        serialized_msg = rpc_common.serialize_msg(msg)
+        msg_size = sys.getsizeof(serialized_msg)
+        call_time = time.time()
+        conn.direct_send(self.reply_q, serialized_msg)
+
+        self.collector.push(measurement='confirmation_time',
+                            call_time=call_time, tags={},
+                            fields={'value': int(time.time() - call_time),
+                                    'msg_size': msg_size})
 
     def reply(self, reply=None, failure=None):
         if not self.msg_id:
@@ -102,17 +184,17 @@ class AMQPIncomingMessage(base.RpcIncomingMessage):
                     LOG.debug(("The reply %(msg_id)s cannot be sent  "
                                "%(reply_q)s reply queue don't exist, "
                                "retrying..."), {
-                                   'msg_id': self.msg_id,
-                                   'reply_q': self.reply_q})
+                                  'msg_id': self.msg_id,
+                                  'reply_q': self.reply_q})
                     time.sleep(0.25)
                 else:
                     self._obsolete_reply_queues.add(self.reply_q, self.msg_id)
                     LOG.info(_LI("The reply %(msg_id)s cannot be sent  "
                                  "%(reply_q)s reply queue don't exist after "
                                  "%(duration)s sec abandoning..."), {
-                                     'msg_id': self.msg_id,
-                                     'reply_q': self.reply_q,
-                                     'duration': duration})
+                                 'msg_id': self.msg_id,
+                                 'reply_q': self.reply_q,
+                                 'duration': duration})
                     return
 
     def acknowledge(self):
@@ -175,7 +257,6 @@ class ObsoleteReplyQueuesCache(object):
 
 
 class AMQPListener(base.PollStyleListener):
-
     def __init__(self, driver, conn):
         super(AMQPListener, self).__init__(driver.prefetch_size)
         self.driver = driver
@@ -222,7 +303,6 @@ class AMQPListener(base.PollStyleListener):
 
 
 class ReplyWaiters(object):
-
     WAKE_UP = object()
 
     def __init__(self):
@@ -287,7 +367,7 @@ class ReplyWaiter(object):
                 self.conn.consume()
             except Exception:
                 LOG.exception(_LE("Failed to process incoming message, "
-                              "retrying..."))
+                                  "retrying..."))
 
     def __call__(self, message):
         message.acknowledge()
@@ -362,6 +442,7 @@ class AMQPDriverBase(base.BaseDriver):
         self._reply_q = None
         self._reply_q_conn = None
         self._waiter = None
+        self.collector = InfluxDBCollector.get_collector()
 
     def _get_exchange(self, target):
         return target.exchange or self._default_exchange
@@ -421,6 +502,9 @@ class AMQPDriverBase(base.BaseDriver):
         else:
             log_msg = "CAST unique_id: %s " % unique_id
 
+        call_time = 0
+        confirm_time = 0
+
         try:
             with self._get_connection(rpc_common.PURPOSE_SEND) as conn:
                 if notify:
@@ -446,13 +530,34 @@ class AMQPDriverBase(base.BaseDriver):
                                    'exchange': exchange,
                                    'topic': target.topic}
                     LOG.debug(log_msg)
+                    call_time = int(time.time())
                     conn.topic_send(exchange_name=exchange, topic=topic,
                                     msg=msg, timeout=timeout, retry=retry)
+                    confirm_time = int(time.time() - call_time)
 
+            msg_size = sys.getsizeof(msg)
+            method = message['method']
+
+            self.collector.push(measurement='confirmation_time',
+                                call_time=call_time, tags={},
+                                fields={'value': confirm_time, 'msg_size': msg_size})
             if wait_for_reply:
-                result = self._waiter.wait(msg_id, timeout)
+                try:
+                    result = self._waiter.wait(msg_id, timeout)
+                    response_time = int(time.time() - call_time)
+                except oslo_messaging.MessagingTimeout as e:
+                    self.collector.push(measurement='round_time',
+                                        call_time=call_time, tags={'method': method, 'timeout': True},
+                                        fields={'value': int(time.time() - call_time), 'msg_size': msg_size})
+                    raise e
+
+                self.collector.push(measurement='round_time',
+                                    call_time=call_time, tags={'method': method, 'timeout': True},
+                                    fields={'value': response_time, 'msg_size': msg_size})
+
                 if isinstance(result, Exception):
                     raise result
+
                 return result
         finally:
             if wait_for_reply:
