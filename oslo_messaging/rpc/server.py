@@ -136,6 +136,30 @@ class loop_bucket(object):
         bucket[cls.MIN] = min(bucket[cls.MIN], value)
         bucket[cls.MAX] = max(bucket[cls.MAX], value)
 
+    @classmethod
+    def create(cls):
+        return [0, 0, 0, 0]
+
+    @classmethod
+    def get_max(cls, bucket):
+        return bucket[cls.MAX] if bucket else 0
+
+    @classmethod
+    def get_min(cls, bucket):
+        return bucket[cls.MIN] if bucket else 0
+
+    @classmethod
+    def get_sum(cls, bucket):
+        return bucket[cls.SUM] if bucket else 0
+
+    @classmethod
+    def get_cnt(cls, bucket):
+        return bucket[cls.CNT] if bucket else 0
+
+    @classmethod
+    def get_avg(cls, bucket):
+        return cls.get_sum(bucket) / (cls.get_cnt(bucket) or 1)
+
 
 class TimeLoop(object):
     """
@@ -151,7 +175,6 @@ class TimeLoop(object):
     def __init__(self, loop_time, loop_granularity):
         self.loop_time = loop_time
         self.granularity = loop_granularity
-        self.start_time = time.time()
         self.latest_action_time = 0
         self.latest_index = 0
         self.total_sum, self.total_calls = 0, 0
@@ -160,7 +183,7 @@ class TimeLoop(object):
         self.buckets_size = (loop_time / loop_granularity)
         self.buckets = []
         for _ in range(0, self.buckets_size):
-            self.buckets.append([0, 0, 0, 0])
+            self.buckets.append(0)
 
     def get_index(self, time_value):
         return int((time_value % self.loop_time) / self.granularity)
@@ -173,26 +196,29 @@ class TimeLoop(object):
         cur_time = time.time()
         time_index = self.get_index(cur_time)
         bucket = self.buckets[time_index]
-
+        # check if the bucket not initialized yet
+        if not bucket:
+            bucket = self.buckets[time_index] = loop_bucket.create()
+        # cases then a loop cycle is done. needs the loop tail flushing.
         if time_index < self.latest_index or self.is_loop_expired(cur_time):
             self.flush(cur_time)
-
+        # to set or accumulate value
         if time_index > self.latest_index:
             loop_bucket.set(bucket, value)
         else:
             loop_bucket.add(bucket, value)
-
+        # flush the gap between consecutive insertions
+        # [last_insertion][old_data][old_data][current_insertion]
         if time_index - self.latest_index > 1:
             for i in range(self.latest_index + 1, time_index):
-                self.buckets[i] = [0, 0, 0, 0]
-
+                self.buckets[i] = 0
         self.total_sum += value
         self.total_calls += 1
         self.latest_index = time_index
         self.latest_action_time = cur_time
 
     def is_loop_expired(self, current_time):
-        return current_time - self.latest_action_time > self.loop_time
+        return current_time - self.latest_action_time >= self.loop_time
 
     def straighten_loop(self):
         straighten = []
@@ -203,8 +229,7 @@ class TimeLoop(object):
         return straighten
 
     def dump(self):
-        return {'start_time': self.start_time,
-                'last_action': self.latest_action_time,
+        return {'latest_call': self.latest_action_time,
                 'runtime': {
                     'min': self.global_min,
                     'max': self.global_max,
@@ -215,9 +240,9 @@ class TimeLoop(object):
 
     def flush(self, ctime):
         self.prev_loop_time = self.latest_action_time
-        flush_to = self.buckets_size if self.is_loop_expired(ctime) else self.get_index(ctime)
-        for i in xrange(0, flush_to):
-            self.buckets[i] = [0, 0, 0, 0]
+        flush_to = self.buckets_size - 1 if self.is_loop_expired(ctime) else self.get_index(ctime)
+        for i in xrange(0, flush_to + 1):
+            self.buckets[i] = 0
 
 
 class RPCStateEndpoint(object):
@@ -231,10 +256,12 @@ class RPCStateEndpoint(object):
         self.start_time = time.time()
         self.loop_time = loop_time
         self.granularity = granularity
+        self.start_time = time.time()
         self.worker_pid = os.getpid()
         self.process_name = os.path.basename(sys.argv[0])
         self.hostname = socket.gethostname()
-        self.info = {'wid': self.worker_pid,
+        self.info = {'started': self.start_time,
+                     'wid': self.worker_pid,
                      'hostname': self.hostname,
                      'proc_name': self.process_name,
                      'topic': self.target.topic,

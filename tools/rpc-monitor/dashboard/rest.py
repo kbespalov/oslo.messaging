@@ -47,10 +47,10 @@ def get_method_state():
     w_state = monitor.actual_state[topic][host][wid]
     m_state = w_state['endpoints'][endpoint][method]
 
-    g, l, a = w_state['granularity'], w_state['loop_time'], m_state['last_action']
+    g, l, a = w_state['granularity'], w_state['loop_time'], m_state['latest_call']
     labels = calculate_labels(g, l, a)
     m_state.setdefault('ats', calculate_metrics(m_state))
-    m_state.setdefault('cs', [bucket[loop_bucket.CNT] for bucket in m_state['distribution']])
+    m_state.setdefault('cs', [loop_bucket.get_cnt(bucket) for bucket in m_state['distribution']])
     m_state['labels'] = labels
     return jsonify(m_state)
 
@@ -80,9 +80,9 @@ def calculate_metrics(statistics):
     time_total = 0
     call_total = 0
 
-    for bucket in buckets:
-        call_total += bucket[loop_bucket.CNT]
-        time_total += bucket[loop_bucket.SUM]
+    for b in buckets:
+        call_total += loop_bucket.get_cnt(b)
+        time_total += loop_bucket.get_sum(b)
 
     sample_avg = time_total / (call_total or 1)
     averaged_ts = []
@@ -90,8 +90,8 @@ def calculate_metrics(statistics):
     quadratic_subs = 0
     non_empty_buckets = 0
 
-    for bucket in buckets:
-        averaged = bucket[loop_bucket.SUM] / (bucket[loop_bucket.CNT] or 1)
+    for b in buckets:
+        averaged = loop_bucket.get_sum(b) / (loop_bucket.get_cnt(b) or 1)
         if averaged > 0:
             quadratic_subs += (averaged - sample_avg) ** 2
             non_empty_buckets += 1
@@ -104,12 +104,12 @@ def calculate_metrics(statistics):
     statistics['ats'] = averaged_ts
     metrics = statistics['metrics'] = {
         'avg': round(sample_avg, 3),
-        'min': round(min(b[loop_bucket.MIN] for b in buckets), 3),
-        'max': round(max(b[loop_bucket.MAX] for b in buckets), 3),
+        'min': round(min(loop_bucket.get_min(b) for b in buckets), 3),
+        'max': round(max(loop_bucket.get_max(b) for b in buckets), 3),
         'dev': round(deviation, 3),
         'time': round(time_total, 3),
         'calls': call_total,
-        'last_call': format_timestamp(statistics['last_action'])
+        'last_call': format_timestamp(statistics['latest_call'])
     }
     return metrics
 
@@ -157,7 +157,9 @@ def group_by_topic():
                 resp_time = format_timestamp(state['resp_time'])
                 w_state.update({
                     'wid': state['wid'],
-                    'host': state['server'],
+                    'host': state['hostname'],
+                    'proc_name': state['proc_name'],
+                    'server': state['server'],
                     'avg': w_state['time'] / (w_state['calls'] or 1),
                     'latency': latency,
                     'resp_time': resp_time,
@@ -168,9 +170,9 @@ def group_by_topic():
 
 
 if __name__ == "__main__":
-    monitor = RPCStateMonitor('localhost', 5673,
-                              'test',
-                              'test',
+    monitor = RPCStateMonitor('localhost', 5672,
+                              'guest',
+                              'guest',
                               update_time=10)
 
 app.run()

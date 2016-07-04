@@ -1,8 +1,10 @@
 <table class="table table-striped">
     <thead>
     <tr>
+        <th>server</th>
         <th>host</th>
-        <th>worker</th>
+        <th>proc name</th>
+        <th>pid</th>
         <th>last response</th>
         <th>latency</th>
         <th>total calls</th>
@@ -12,7 +14,9 @@
     </thead>
 
     <tbody ng-repeat="sample in state.workers">
+    <td>{{sample.server}}</td>
     <td>{{sample.host}}</td>
+    <td>{{sample.proc_name}}</td>
     <td>{{sample.wid}}</td>
     <td>{{sample.resp_time}}</td>
     <td>{{sample.latency}}</td>

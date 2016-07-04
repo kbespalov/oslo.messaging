@@ -6,6 +6,7 @@ from threading import Thread, RLock
 
 from oslo_config import cfg
 from client.rabbit_client import RPCStateClient
+from state import InfluxDBStateRepository
 
 monitor_opt_group = cfg.OptGroup(name='rpc_state_monitor')
 rabbit_opt_group = cfg.OptGroup(name='oslo_messaging_rabbit')
@@ -58,7 +59,6 @@ class PingPongMixin(object):
 
 
 class RPCStateRepositoryBase(object):
-
     def append(self, incoming):
         pass
 
@@ -87,12 +87,13 @@ class RPCStateMonitor(PingPongMixin):
         self.actual_state = nested_dict()
         self.history = nested_dict()
         self.running_pings = nested_dict()
+        self.repository = InfluxDBStateRepository()
+        self.callbacks_routes = {'sample': self.repository.append, 'pong': self.on_pong}
         self.client = RPCStateClient(host, port, user, passw, self.on_incoming)
         self.update_interval = update_time
         self.periodic_updates = Thread(target=self.update_rpc_state)
         self.periodic_updates.start()
         self.ping_lock = RLock()
-        self.callbacks_routes = {'sample': self.on_sample, 'pong': self.on_pong}
 
     def topic_list(self):
         return self.actual_state.keys()
@@ -120,32 +121,30 @@ class RPCStateMonitor(PingPongMixin):
         """
         topic, server, wid = sample['topic'], sample['server'], sample['wid']
         worker_history = self.history.path(topic, server, wid)
-        # the measurement loop time (duration)
+
         duration = sample['loop_time']
-        # the time size of buckets which divides a loop e.g [0-5][5-10]..
+        start_time = sample['started']
         granularity = sample['granularity']
 
         for endpoint, methods in sample['endpoints'].iteritems():
-            for method, state_loop in methods.iteritems():
+            for method, state in methods.iteritems():
 
-                start_time = state_loop['start_time']
-                last_action = state_loop['last_action']
-                distribution = state_loop['distribution']
-                # todo : inside worker
+                latest_call = state['latest_call']
+                distribution = state['distribution']
+
                 metric_history = worker_history.path(endpoint, method)
-                metric_history['start_time'] = start_time
-                metric_history['granularity'] = granularity
-                metric_history['last_action'] = last_action
-
                 timeline = metric_history.path('timeline')
-                # merging
-                upper_time_bucket = int((last_action - start_time) / granularity)
+                metric_history['latest_call'] = latest_call
+
+                upper_time_bucket = int((latest_call - start_time) / granularity)
                 lower_time_bucket = upper_time_bucket - duration / granularity
+
                 for value in distribution:
                     timeline[lower_time_bucket] = value
                     lower_time_bucket += 1
 
     def on_sample(self, sample):
+        print json.dumps(sample)
         topic, server, wid = sample['topic'], sample['server'], sample['wid']
         worker_state = self.actual_state.path(topic, server, wid)
         worker_state.update(sample)
