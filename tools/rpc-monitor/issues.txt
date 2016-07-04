@@ -1,3 +1,10 @@
 1) среднеквадратичное отклонение больше max why ? [fixed]
-2) при сортировке таблицы row с графиком едет отдельно и отображается не в том месте
-3) не синхронизированны по времени
+2) при сортировке таблицы row с графиком едет отдельно и отображается не в том месте [fixed]
+3) не синхронизированны по времени:
+    current_time % duration
+
+    start_time = []  current_time : diff / duration : int
+    start_time = []  current_time : diff / duration : int
+    start_time = []  current_time : diff / duration : int
+    start_time = []  current_time : diff / duration : int
+

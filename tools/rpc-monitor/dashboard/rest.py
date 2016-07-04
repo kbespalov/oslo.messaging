@@ -121,7 +121,6 @@ def global_state():
 
 @app.route('/api/methods/state', methods=['GET'])
 def group_by_topic():
-
     response = {}
     for topic, hosts in monitor.actual_state.iteritems():
         topic_state = response[topic] = {}
@@ -162,14 +161,14 @@ def group_by_topic():
                     'avg': w_state['time'] / (w_state['calls'] or 1),
                     'latency': latency,
                     'resp_time': resp_time,
-                    'runtime': format_timestamp(state['runtime'], absolute=True)
+                    'runtime': str(datetime.timedelta(seconds=state['runtime']))
                 })
                 workers_state.append(w_state)
     return jsonify(response)
 
 
 if __name__ == "__main__":
-    monitor = RPCStateMonitor('192.168.122.101', 5672,
+    monitor = RPCStateMonitor('localhost', 5673,
                               'test',
                               'test',
                               update_time=10)

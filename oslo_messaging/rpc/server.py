@@ -99,6 +99,7 @@ import functools
 import inspect
 import json
 import os
+import socket
 import time
 
 __all__ = [
@@ -141,8 +142,8 @@ class TimeLoop(object):
      The collection to persisting a time distribution values with
      specified time interval (time loop) and granularity.
 
-     For example: if duration 60 min, granularity 5 min.
-     then self.distribution is list of 12 buckets:
+     For example: if loop time is 60 min, granularity is 5 min.
+     then self.buckets is list of 12 buckets:
      [0-5 min] [5-10 min] [10-15 min] ... [55-60 min]
      to each of them we are accumulate values by adding.
     """
@@ -230,15 +231,20 @@ class RPCStateEndpoint(object):
         self.start_time = time.time()
         self.loop_time = loop_time
         self.granularity = granularity
-        self.register_endpoints()
         self.worker_pid = os.getpid()
+        self.process_name = os.path.basename(sys.argv[0])
+        self.hostname = socket.gethostname()
         self.info = {'wid': self.worker_pid,
+                     'hostname': self.hostname,
+                     'proc_name': self.process_name,
                      'topic': self.target.topic,
                      'server': self.target.server,
                      'loop_time': self.loop_time,
                      'granularity': self.granularity}
 
-    def register_endpoints(self):
+        self._register_endpoints()
+
+    def _register_endpoints(self):
 
         def rpc_stats_aware(stats, method):
             method_name = method.__name__

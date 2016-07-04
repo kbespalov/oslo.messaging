@@ -32,7 +32,56 @@ class nested_dict(dict):
         return level
 
 
-class RPCStateMonitor(object):
+class PingPongMixin(object):
+    def on_pong(self, pong):
+        topic = pong['topic']
+        ping = self.running_pings.path(topic)
+        ping['pongs'].append((time.time(), pong))
+
+    def ping_thread(self, topic, consumers_count, is_run):
+        while is_run:
+            for i in range(0, consumers_count):
+                self.client.ping(time.time(), '', routing_key=topic)
+
+    def start_ping(self, topic):
+        topic_ping = self.running_pings.path(topic)
+        topic_ping['is_run'] = is_run = True
+        topic_ping['pongs'] = []
+        queue_info = self.client.rabbit_client.queue_info(topic)
+        consumers = queue_info['consumers']
+        thread = Thread(target=self.ping_thread, args=[topic, consumers, is_run])
+        thread.start()
+
+    def stop_ping(self, topic, server):
+        topic_ping = self.running_pings.path(topic)
+        topic_ping['is_run'] = False
+
+
+class RPCStateRepositoryBase(object):
+
+    def append(self, incoming):
+        pass
+
+    def topics(self):
+        pass
+
+    def workers(self):
+        pass
+
+    def host(self):
+        pass
+
+    def state_of_method(self, endpoint, method_name):
+        pass
+
+    def state_of_worker(self, host, worker):
+        pass
+
+    def state_of_host(self, topic):
+        pass
+
+
+class RPCStateMonitor(PingPongMixin):
     def __init__(self, host, port, user, passw, update_time=60):
 
         self.actual_state = nested_dict()
@@ -44,11 +93,6 @@ class RPCStateMonitor(object):
         self.periodic_updates.start()
         self.ping_lock = RLock()
         self.callbacks_routes = {'sample': self.on_sample, 'pong': self.on_pong}
-
-    def on_pong(self, pong):
-        topic = pong['topic']
-        ping = self.running_pings.path(topic)
-        ping['pongs'].append((time.time(), pong))
 
     def topic_list(self):
         return self.actual_state.keys()
@@ -63,6 +107,12 @@ class RPCStateMonitor(object):
 
     def rpc_method_state(self, topic, host, wid, endpoint, name):
         return self.actual_state[topic][host][wid]['endpoints'][endpoint][name]
+
+    def get_history_timeline(self, timestamp):
+        for topic, hosts in self.history.iteritems():
+            for server, workers in hosts.iteritems():
+                for wid, state in workers.iteritems():
+                    pass
 
     def merge_to_history(self, sample):
         """
@@ -81,7 +131,7 @@ class RPCStateMonitor(object):
                 start_time = state_loop['start_time']
                 last_action = state_loop['last_action']
                 distribution = state_loop['distribution']
-
+                # todo : inside worker
                 metric_history = worker_history.path(endpoint, method)
                 metric_history['start_time'] = start_time
                 metric_history['granularity'] = granularity
@@ -107,7 +157,6 @@ class RPCStateMonitor(object):
         if response:
             msg_type = response['msg_type']
             self.callbacks_routes[msg_type](response)
-            print json.dumps(response)
         else:
             print 'Failed'
 
@@ -121,21 +170,3 @@ class RPCStateMonitor(object):
             self.client.get_rpc_stats(request_time)
             time.sleep(self.update_interval)
             self.update_exchanges_list()
-
-    def ping_thread(self, topic, consumers_count, is_run):
-        while is_run:
-            for i in range(0, consumers_count):
-                self.client.ping(time.time(), '', routing_key=topic)
-
-    def start_ping(self, topic):
-        topic_ping = self.running_pings.path(topic)
-        topic_ping['is_run'] = is_run = True
-        topic_ping['pongs'] = []
-        queue_info = self.client.rabbit_client.queue_info(topic)
-        consumers = queue_info['consumers']
-        thread = Thread(target=self.ping_thread, args=[topic, consumers, is_run])
-        thread.start()
-
-    def stop_ping(self, topic, server):
-        topic_ping = self.running_pings.path(topic)
-        topic_ping['is_run'] = False

@@ -27,60 +27,136 @@
 </head>
 
 <body class="container" ng-app="rpcstate" ng-controller="RPCStateController">
-    <div id="navbar" class="row">
-        <div class="col-md-10 col-md-offset-1">
-            <nav class="navbar navbar-default">
-                <div class="container-fluid">
-                    <div class="navbar-header">
-                        <a class="navbar-brand">RPC State Monitor</a>
-                    </div>
-                    <ul class="nav navbar-nav">
-                        <li class="active"><a ui-sref="#">Explore</a></li>
-                        <li><a href="#">Setting</a></li>
-                    </ul>
+<div id="navbar" class="row">
+    <div class="col-md-10 col-md-offset-1">
+        <nav class="navbar navbar-default">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <a class="navbar-brand">RPC State Monitor</a>
                 </div>
-            </nav>
-        </div>
-    </div>
-    <div id="filter" class="row">
-        <div class="col-md-4 col-md-offset-7">
-            <div class="input-group">
-                <input type="text" class="form-control" placeholder="filtering query" ng-model="filter_query">
+                <ul class="nav navbar-nav">
+                    <li class="active"><a ui-sref="#">Explore</a></li>
+                    <li><a href="#">Setting</a></li>
+                </ul>
             </div>
-        </div>
+        </nav>
     </div>
-    <div id="preloader"></div>
+</div>
 
-    <div ng-repeat="(topic,state) in methods_state" class="row top-buffer">
-        <div class="col-md-12">
-            <div class="panel panel-default card">
-                <div class="panel-heading">
-                    <h3 class="panel-title">
+<div id="preloader"></div>
+
+<div ng-repeat="(topic,state) in methods_state" class="row top-buffer">
+    <div class="col-md-12">
+        <div class="panel panel-default card">
+            <div class="panel-heading">
+                <h3 class="panel-title">
                     <span>topic:  {{topic}} </span>
                 </h3>
-                </div>
-                <div class="panel-body">
-                    <ul class="nav nav-tabs">
-                        <li class="active"><a href="#endpoints_{{topic}}" data-toggle="tab">Endpoints State</a></li>
-                        <li><a href="#workers_{{topic}}" data-toggle="tab">Workers State</a></li>
-                        <li><a href="#ping_{{topic}}" data-toggle="tab">Ping</a></li>
-                    </ul>
-                    <div class="tab-content">
-                        <div id="endpoints_{{topic}}" class="tab-pane active">
-                            <div ng-include="'views/nested/methods_table.html'"></div>
-                        </div>
-                        <div id="workers_{{topic}}" class="tab-pane">
-                            <div ng-include="'views/nested/workers_table.html'"></div>
-                        </div>
-                        <div id="ping_{{topic}}" class="tab-pane">
-                            <div ng-include="'views/nested/ping.html'"></div>
-                        </div>
+            </div>
+
+            <div class="panel-body">
+                <ul class="nav nav-tabs">
+                    <li class="active"><a href="#endpoints_{{topic}}" data-toggle="tab">Endpoints State</a></li>
+                    <li><a href="#workers_{{topic}}" data-toggle="tab">Workers State <span class="badge">{{state.workers.length}}</span></a></li>
+                    <li><a href="#ping_{{topic}}" data-toggle="tab">Ping</a></li>
+                </ul>
+                <div class="tab-content">
+                    <div id="endpoints_{{topic}}" class="tab-pane active">
+                        <table class="table">
+                            <thead>
+
+                            <tr>
+                                <th rowspan="2" ng-click="sortBy(topic,'host')">host</th>
+                                <th rowspan="2" ng-click="sortBy(topic,'wid')">worker</th>
+                                <th rowspan="2" ng-click="sortBy(topic,'endpoint')">endpoint</th>
+                                <th rowspan="2" ng-click="sortBy(topic,'method')">method</th>
+                                <th rowspan="2" ng-click="sortBy(topic,'calls')">calls</th>
+                                <th class="text-center" colspan="6">time consumption</th>
+                            </tr>
+                            <tr>
+                                <th ng-click="sortBy(topic,'avg')">avg</th>
+                                <th ng-click="sortBy(topic,'min')">min</th>
+                                <th ng-click="sortBy(topic,'max')">max</th>
+                                <th ng-click="sortBy(topic,'dev')">dev</th>
+                                <th ng-click="sortBy(topic,'last_call')">last call</th>
+                            </tr>
+
+                            </thead>
+                            <tbody ng-repeat="sample in state.methods | orderBy: getSortingKey(topic):getSortingOrder(topic)">
+                            <tr ng-click="show_charts($event,sample,topic)">
+                                <td>{{ :: sample.host}}</td>
+                                <td>{{ :: sample.wid}}</td>
+                                <td>{{ :: sample.endpoint}}</td>
+                                <td>{{ :: sample.method}}</td>
+                                <td>{{sample.calls}}</td>
+                                <td>{{sample.avg}}</td>
+                                <td>{{sample.min}}</td>
+                                <td>{{sample.max}}</td>
+                                <td>{{sample.dev}}</td>
+                                <td>{{sample.last_call}}</td>
+                            </tr>
+                            <tr ng-show="sample.ats != undefined" class="collapse out" id="{{sample.id}}">
+                                <td colspan="10">
+                                    <div class="well well-lg">
+                                        <p><b> all time statistics: </b></p>
+                                        <ul class="list-group">
+                                            <li class="list-group-item">
+                                                <span class="badge">{{ sample.runtime.calls}}</span> total calls
+                                            </li>
+                                            <li class="list-group-item">
+                                                <span class="badge">{{ sample.runtime.max }}</span> global max (s)
+                                            </li>
+                                            <li class="list-group-item">
+                                                <span class="badge">{{ sample.runtime.min }} </span> global min (s)
+                                            </li>
+                                            <li class="list-group-item">
+                                                <span class="badge"> {{sample.runtime.sum / sample.runtime.calls | number: 3}} </span> per call (s)
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <canvas class="chart chart-bar" chart-data="[sample.cs]" chart-labels="sample.labels" chart-legend="true" chart-series="['calls count']"></canvas>
+                                    <canvas class="chart chart-bar" chart-data="[sample.ats]" chart-labels="sample.labels" chart-legend="true" chart-series="['avg time consumption']"></canvas>
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
+                        <!-- <div ng-include="'views/nested/methods_table.html'"></div> -->
+                    </div>
+                    <div id="workers_{{topic}}" class="tab-pane">
+                        <table class="table table-striped">
+                            <thead>
+                            <tr>
+                                <th>host</th>
+                                <th>worker</th>
+                                <th>last response</th>
+                                <th>latency</th>
+                                <th>total calls</th>
+                                <th>per call</th>
+                                <th>runtime</th>
+                            </tr>
+                            </thead>
+
+                            <tbody ng-repeat="sample in state.workers">
+                            <td>{{sample.host}}</td>
+                            <td>{{sample.wid}}</td>
+                            <td>{{sample.resp_time}}</td>
+                            <td>{{sample.latency}}</td>
+                            <td>{{sample.calls}}</td>
+                            <td>{{sample.avg}}</td>
+                            <td>{{sample.runtime}}</td>
+                            </tbody>
+                        </table>
+
+                        <!--<div ng-include="'views/nested/workers_table.html'"></div>-->
+                    </div>
+                    <div id="ping_{{topic}}" class="tab-pane">
+                        <!--<div ng-include="'views/nested/ping.html'"></div>-->
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    {{ enable_table_sorting() }}  
+</div>
 </body>
 
 </html>
