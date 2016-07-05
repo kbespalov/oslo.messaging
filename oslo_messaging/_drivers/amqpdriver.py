@@ -147,7 +147,7 @@ class AMQPIncomingMessage(base.RpcIncomingMessage):
                       'reply_q': self.reply_q,
                       'elapsed': self.stopwatch.elapsed()})
         serialized_msg = rpc_common.serialize_msg(msg)
-        msg_size = sys.getsizeof(serialized_msg)
+        msg_size = sys.getsizeof(serialized_msg['oslo.message'])
         call_time = time.time()
         conn.direct_send(self.reply_q, serialized_msg)
         self.collector.push(measurement='confirmation_time',
@@ -535,13 +535,13 @@ class AMQPDriverBase(base.BaseDriver):
                                     msg=msg, timeout=timeout, retry=retry)
                     confirm_time = time.time() - call_time
 
-            msg_size = sys.getsizeof(msg)
-            method = message['method']
+            msg_size = sys.getsizeof(msg['oslo.message'])
 
             self.collector.push(measurement='confirmation_time',
                                 call_time=call_time, tags={},
                                 fields={'value': confirm_time, 'msg_size': msg_size})
             if wait_for_reply:
+                method = message['method']
                 try:
                     result = self._waiter.wait(msg_id, timeout)
                     response_time = time.time() - call_time
