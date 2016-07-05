@@ -53,7 +53,7 @@ class InfluxDBCollector(object):
         self.hostname = socket.gethostname()
         self.proc_name = os.path.basename(sys.argv[0])
         self.pid = os.getpid()
-        self.samples_queue = Queue(maxsize=100)
+        self.samples_queue = Queue(maxsize=1000)
         self.conf = self.setup_conf(cfg.CONF)
         self.is_run = True
 
@@ -72,12 +72,13 @@ class InfluxDBCollector(object):
         conf.register_opts(InfluxDBCollector.opts, group=opt_group)
         return conf.oslo_metrics
 
-    def populate_batch(self, batch, max_size=10):
+    def populate_batch(self, batch, max_size=1000):
         try:
+            timestamp = time.time()
             while 1:
                 batch.append(self.samples_queue.get(timeout=5))
                 max_size -= 1
-                if max_size == 0:
+                if max_size == 0 or time.time() - timestamp > 5:
                     break
         except Empty:
             pass
@@ -149,10 +150,9 @@ class AMQPIncomingMessage(base.RpcIncomingMessage):
         msg_size = sys.getsizeof(serialized_msg)
         call_time = time.time()
         conn.direct_send(self.reply_q, serialized_msg)
-
         self.collector.push(measurement='confirmation_time',
                             call_time=call_time, tags={},
-                            fields={'value': int(time.time() - call_time),
+                            fields={'value': time.time() - call_time,
                                     'msg_size': msg_size})
 
     def reply(self, reply=None, failure=None):
@@ -530,10 +530,10 @@ class AMQPDriverBase(base.BaseDriver):
                                    'exchange': exchange,
                                    'topic': target.topic}
                     LOG.debug(log_msg)
-                    call_time = int(time.time())
+                    call_time = time.time()
                     conn.topic_send(exchange_name=exchange, topic=topic,
                                     msg=msg, timeout=timeout, retry=retry)
-                    confirm_time = int(time.time() - call_time)
+                    confirm_time = time.time() - call_time
 
             msg_size = sys.getsizeof(msg)
             method = message['method']
@@ -544,15 +544,15 @@ class AMQPDriverBase(base.BaseDriver):
             if wait_for_reply:
                 try:
                     result = self._waiter.wait(msg_id, timeout)
-                    response_time = int(time.time() - call_time)
+                    response_time = time.time() - call_time
                 except oslo_messaging.MessagingTimeout as e:
-                    self.collector.push(measurement='round_time',
+                    self.collector.push(measurement='response_time',
                                         call_time=call_time, tags={'method': method, 'timeout': True},
-                                        fields={'value': int(time.time() - call_time), 'msg_size': msg_size})
+                                        fields={'value': time.time() - call_time, 'msg_size': msg_size})
                     raise e
 
-                self.collector.push(measurement='round_time',
-                                    call_time=call_time, tags={'method': method, 'timeout': True},
+                self.collector.push(measurement='response_time',
+                                    call_time=call_time, tags={'method': method},
                                     fields={'value': response_time, 'msg_size': msg_size})
 
                 if isinstance(result, Exception):
