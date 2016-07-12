@@ -58,36 +58,13 @@ class PingPongMixin(object):
         topic_ping['is_run'] = False
 
 
-class RPCStateRepositoryBase(object):
-    def append(self, incoming):
-        pass
-
-    def topics(self):
-        pass
-
-    def workers(self):
-        pass
-
-    def host(self):
-        pass
-
-    def state_of_method(self, endpoint, method_name):
-        pass
-
-    def state_of_worker(self, host, worker):
-        pass
-
-    def state_of_host(self, topic):
-        pass
-
-
 class RPCStateMonitor(PingPongMixin):
     def __init__(self, host, port, user, passw, update_time=60):
 
         self.actual_state = nested_dict()
         self.history = nested_dict()
         self.running_pings = nested_dict()
-        self.repository = InfluxDBStateRepository()
+        self.repository = InfluxDBStateRepository(update_time)
         self.callbacks_routes = {'sample': self.repository.append, 'pong': self.on_pong}
         self.client = RPCStateClient(host, port, user, passw, self.on_incoming)
         self.update_interval = update_time

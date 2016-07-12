@@ -1,4 +1,3 @@
-
 # Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,8 +14,11 @@
 
 import abc
 import collections
+import heapq
 import sys
 import threading
+import cachetools
+import time
 
 from oslo_log import log as logging
 import six
@@ -38,7 +40,6 @@ else:
 
 @six.add_metaclass(abc.ABCMeta)
 class Pool(object):
-
     """A thread-safe object pool.
 
     Modelled after the eventlet.pools.Pool interface, but designed to be safe
@@ -47,20 +48,33 @@ class Pool(object):
     Resizing is not supported.
     """
 
-    def __init__(self, max_size=4):
+    def __init__(self, max_size=4, min_size=2, ttl=1200):
         super(Pool, self).__init__()
-
+        self.ttl = ttl
+        self.ttl_watch = {}
         self._max_size = max_size
+        self._min_size = min_size
         self._current_size = 0
         self._cond = threading.Condition()
-
-        self._items = collections.deque()
+        self._items = []
 
     def put(self, item):
         """Return an item to the pool."""
         with self._cond:
-            self._items.appendleft(item)
+            heapq.heappush(self._items, (time.time(), item))
             self._cond.notify()
+
+    def expire(self):
+        now = time.time()
+        while len(self._items) > self._min_size:
+            push_time, conn = heapq.heappop(self._items)
+            if now - push_time < self.ttl:
+                heapq.heappush(self._items, (push_time, conn))
+                break
+            else:
+                conn.close()
+                LOG.debug("Idle connection expired and closed. "
+                          "Pool size: %d" % len(self._items))
 
     def get(self):
         """Return an item from the pool, when one is available.
@@ -70,7 +84,9 @@ class Pool(object):
         with self._cond:
             while True:
                 try:
-                    return self._items.popleft()
+                    _, connection = heapq.heappop(self._items)
+                    self.expire()
+                    return connection
                 except IndexError:
                     pass
 
@@ -93,7 +109,8 @@ class Pool(object):
         with self._cond:
             while True:
                 try:
-                    yield self._items.popleft()
+                    _, connection = heapq.heappop(self._items)
+                    yield connection
                 except IndexError:
                     break
 
@@ -104,6 +121,7 @@ class Pool(object):
 
 class ConnectionPool(Pool):
     """Class that implements a Pool of Connections."""
+
     def __init__(self, conf, rpc_conn_pool_size, url, connection_cls):
         self.connection_cls = connection_cls
         self.conf = conf
@@ -111,13 +129,10 @@ class ConnectionPool(Pool):
         super(ConnectionPool, self).__init__(rpc_conn_pool_size)
         self.reply_proxy = None
 
-    # TODO(comstud): Timeout connections not used in a while
-    def create(self, purpose=None):
-        if purpose is None:
-            purpose = common.PURPOSE_SEND
+    def create(self, purpose=common.PURPOSE_SEND):
         LOG.debug('Pool creating new connection')
         return self.connection_cls(self.conf, self.url, purpose)
 
     def empty(self):
-        for item in self.iter_free():
+        for _, item in self.iter_free():
             item.close()

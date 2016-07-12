@@ -1,6 +1,5 @@
 import datetime
 from math import sqrt
-from urllib import urlencode
 
 from flask import Flask, jsonify
 from flask import request, render_template
@@ -170,7 +169,7 @@ def group_by_topic():
 
 
 if __name__ == "__main__":
-    monitor = RPCStateMonitor('localhost', 5672,
+    monitor = RPCStateMonitor('172.18.78.110', 5672,
                               'guest',
                               'guest',
                               update_time=10)
